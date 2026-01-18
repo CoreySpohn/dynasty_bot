@@ -1,0 +1,139 @@
+# League Members Configuration
+# Maps all known identities for each league member
+
+members:
+  - name: "Corey"
+    discord_id: "340933541825216524"
+    discord_name: "omnipotentspoon"
+    sleeper_usernames:
+      - "Omnipotentspoon"
+    sleeper_team_names:
+      - "Levis will not be good 😭"
+    nicknames: []
+    notes: "League commissioner"
+
+  - name: "Fuzzy"
+    discord_id: "432261112277499934"
+    discord_name: "fuzzymcw"
+    sleeper_usernames:
+      - "DaFuzz"
+    sleeper_team_names:
+      - "Wolfe Packe"
+    nicknames:
+      - "FuzzyMcW"
+    notes: ""
+
+  - name: "Rob Jr."
+    discord_id: "387478369953906690"
+    discord_name: "cifra00"
+    sleeper_usernames:
+      - "cifra00"
+    sleeper_team_names:
+      - "Order of the Penix"
+    nicknames:
+      - "Rob"
+      - "Junior"
+    notes: "Son of Rob Sr."
+
+  - name: "Aneesh"
+    discord_id: "692042252943491082"
+    discord_name: "ezmoneybagz"
+    sleeper_usernames:
+      - "EZMoneyBagZ"
+    sleeper_team_names:
+      - "First round wash-ups"
+    nicknames: []
+    notes: ""
+
+  - name: "Grant"
+    discord_id: "680235711454380097"
+    discord_name: "the_grex"
+    sleeper_usernames:
+      - "TheGRex"
+    sleeper_team_names: []
+    nicknames:
+      - "TheGRex"
+      - "the_grex"
+    notes: ""
+
+  - name: "Aaron"
+    discord_id: "427984698057162773"
+    discord_name: "arrowmac"
+    sleeper_usernames:
+      - "ArrowMac"
+    sleeper_team_names:
+      - "Touchdown Snipers"
+    nicknames:
+      - "ArrowMac"
+    notes: ""
+
+  - name: "James"
+    discord_id: "426896949568995328"
+    discord_name: "s0lux"
+    sleeper_usernames:
+      - "Solux"
+    sleeper_team_names:
+      - "Meet the Robinsons"
+    nicknames:
+      - "Solux"
+    notes: ""
+
+  - name: "David"
+    discord_id: "729930407260454954"
+    discord_name: "davidd3."
+    sleeper_usernames:
+      - "david3"
+    sleeper_team_names:
+      - "I<3Jacksonville"
+    nicknames:
+      - "david3"
+    notes: ""
+
+  - name: "Rob Sr."
+    discord_id: "1014595899109949520"
+    discord_name: "grizzledvet"
+    sleeper_usernames:
+      - "GrizzledVets"
+    sleeper_team_names:
+      - "Revived Grizzled Vets!"
+    nicknames:
+      - "Grizzled Vet"
+      - "Senior"
+    notes: "Father of Rob Jr."
+
+  - name: "Noah"
+    discord_id: "342429916442394626"
+    discord_name: "slapjacks13"
+    sleeper_usernames:
+      - "slapjacks10"
+      - "slapjacks13"
+    sleeper_team_names:
+      - "Tight End Jail"
+    nicknames: []
+    notes: ""
+
+  - name: "Kalani"
+    discord_id: "186391981889421312"
+    discord_name: "kalanidanasrivera"
+    sleeper_usernames:
+      - "megalodon3000"
+      - "kalanidanasrivera"
+    sleeper_team_names:
+      - "ParkedOutByTheLake"
+    nicknames:
+      - "Kalani Danas Rivera"
+    notes: ""
+
+  - name: "Brendan"
+    discord_id: "467544376588107777"
+    discord_name: "caseratops"
+    sleeper_usernames:
+      - "bcaseria"
+      - "Caseratops"
+    sleeper_team_names:
+      - "Freaky 4 Zekey"
+    nicknames:
+      - "Caseratops"
+    notes: ""
+
+former_members: []
