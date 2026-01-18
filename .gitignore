@@ -217,3 +217,6 @@ data/
 
 # Generated config files
 config/members_generated.yaml
+
+# Separate repository
+fantasy_site/
