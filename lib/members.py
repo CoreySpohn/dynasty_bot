@@ -205,6 +205,25 @@ class MemberRegistry:
         
         return None
     
+    def find_by_sleeper_id(self, sleeper_id: str) -> Optional[Member]:
+        """Find a member by Sleeper user ID.
+        
+        Args:
+            sleeper_id: Sleeper user ID.
+            
+        Returns:
+            Member if found, None otherwise.
+        """
+        if not self._loaded:
+            self.load()
+        
+        sleeper_id_str = str(sleeper_id)
+        for member in self._members:
+            if member.sleeper_id and str(member.sleeper_id) == sleeper_id_str:
+                return member
+        
+        return None
+    
     def find_by_sleeper_username(self, username: str) -> Optional[Member]:
         """Find a member by Sleeper username.
         
