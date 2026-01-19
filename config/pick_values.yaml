@@ -1,0 +1,80 @@
+# KeepTradeCut Draft Pick Values (Superflex - 12 Team)
+# Source: https://keeptradecut.com/dynasty-rankings
+#
+# These values are for the "upcoming draft" and not tied to a specific year.
+# Update these periodically as KTC values change.
+#
+# Format: overall pick number -> value
+# e.g., pick 1 (1.01) = 6716, pick 13 (2.01) = 3850
+
+# All 60 picks (5 rounds x 12 teams)
+pick_values:
+  # Round 1 (Picks 1-12)
+  1: 6716
+  2: 6146
+  3: 5889
+  4: 5598
+  5: 5343
+  6: 5114
+  7: 4775
+  8: 4708
+  9: 4584
+  10: 4458
+  11: 4366
+  12: 4137
+  
+  # Round 2 (Picks 13-24)
+  13: 3850
+  14: 3770
+  15: 3589
+  16: 3465
+  17: 3343
+  18: 3252
+  19: 3158
+  20: 3119
+  21: 3007
+  22: 2953
+  23: 2868
+  24: 2722
+  
+  # Round 3 (Picks 25-36)
+  25: 2597
+  26: 2466
+  27: 2386
+  28: 2340
+  29: 2321
+  30: 2296
+  31: 2266
+  32: 2207
+  33: 2185
+  34: 2123
+  35: 2107
+  36: 2033
+  
+  # Round 4 (Picks 37-48)
+  37: 1945
+  38: 1908
+  39: 1859
+  40: 1820
+  41: 1781
+  42: 1742
+  43: 1705
+  44: 1672
+  45: 1639
+  46: 1606
+  47: 1573
+  48: 1540
+  
+  # Round 5 (Picks 49-60)
+  49: 1500
+  50: 1460
+  51: 1420
+  52: 1380
+  53: 1340
+  54: 1300
+  55: 1260
+  56: 1220
+  57: 1180
+  58: 1140
+  59: 1100
+  60: 1060

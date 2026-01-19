@@ -1,0 +1,42 @@
+# League State Configuration
+# Updated via /state command - controls which deadlines are active
+
+# Current league state
+# Flow: in_season → off_season → pre_draft → pre_season → in_season
+#   - off_season: After Super Bowl, betting & store open
+#   - pre_draft: After rules voted, store closed, league renewed
+#   - pre_season: After rookie draft
+#   - in_season: Day before NFL season starts
+current_state: off_season  # off_season | pre_draft | pre_season | in_season
+
+# Season configuration
+season:
+  year: 2026
+
+# State transition dates - suggestions only, manual control via /state
+# These are populated by /sync_nfl command or set manually
+transitions:
+  off_season_start: null      # After Super Bowl
+  pre_draft_start: null       # After rules voted, store closed
+  pre_season_start: null      # After rookie draft
+  in_season_start: null       # NFL Week 1 - from nflreadpy
+
+
+# Notification settings
+alerts:
+  channel_id: 1462499662635466987  # #Commish-alerts (for commissioner reminders)
+  reminder_time: "18:00"           # 6 PM
+  timezone: "America/New_York"     # EST
+
+# Announcements settings (for league-wide notifications)
+announcements:
+  channel_id: 1132375832107679874  # #announcements
+  role_id: 1462517495100346473     # @Active Owner role
+
+# Commissioner Discord ID for pings (power rankings reminder, etc.)
+commissioner:
+  discord_id: 340933541825216524
+
+# Kohl's Cash betting system
+kohls:
+  channel_id: 1462543776278122731  # #kohls-cashino forum

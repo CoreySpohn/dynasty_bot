@@ -24,6 +24,8 @@ class Member:
     name: str
     discord_id: Optional[str] = None
     discord_name: Optional[str] = None
+    sleeper_id: Optional[str] = None
+    roster_id: Optional[int] = None
     sleeper_usernames: list[str] = field(default_factory=list)
     sleeper_team_names: list[str] = field(default_factory=list)
     nicknames: list[str] = field(default_factory=list)
@@ -39,6 +41,7 @@ class Member:
         if self.discord_name:
             names.append(self.discord_name)
         return names
+
     
     def matches(self, query: str) -> bool:
         """Check if query matches any of this member's identities.
@@ -100,6 +103,8 @@ class MemberRegistry:
                     name=m.get("name", "Unknown"),
                     discord_id=m.get("discord_id"),
                     discord_name=m.get("discord_name"),
+                    sleeper_id=m.get("sleeper_id"),
+                    roster_id=m.get("roster_id"),
                     sleeper_usernames=m.get("sleeper_usernames", []),
                     sleeper_team_names=m.get("sleeper_team_names", []),
                     nicknames=m.get("nicknames", []),
@@ -111,6 +116,8 @@ class MemberRegistry:
                     name=m.get("name", "Unknown"),
                     discord_id=m.get("discord_id"),
                     discord_name=m.get("discord_name"),
+                    sleeper_id=m.get("sleeper_id"),
+                    roster_id=m.get("roster_id"),
                     sleeper_usernames=m.get("sleeper_usernames", []),
                     sleeper_team_names=m.get("sleeper_team_names", []),
                     nicknames=m.get("nicknames", []),

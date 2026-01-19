@@ -176,6 +176,9 @@ class LeagueRumors(commands.Cog):
         self.config = load_reporters_config()
         self.ai_client = GeminiClient()
         
+        # Load rumor generation tables
+        self.rumor_tables = self._load_rumor_tables()
+        
         # Channels for different rumor types
         self.rumors_channel_id = int(os.getenv("RUMORS_CHANNEL_ID", 0))
         self.nfl_channel_id = int(os.getenv("NFL_CHANNEL_ID", 0)) or self.rumors_channel_id
@@ -184,7 +187,133 @@ class LeagueRumors(commands.Cog):
         self._team_names: Optional[list[str]] = None
         
         # Start random rumor task
-        self.random_rumor_task.start()
+        # NOTE: Disabled for now to avoid spam during testing
+        # self.random_rumor_task.start()
+    
+    def _load_rumor_tables(self) -> dict:
+        """Load rumor generation tables from YAML."""
+        tables_path = Path(__file__).parent.parent / "config" / "rumor_tables.yaml"
+        try:
+            with open(tables_path, "r") as f:
+                return yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            logger.warning("rumor_tables.yaml not found")
+            return {}
+        except Exception as e:
+            logger.error(f"Failed to load rumor tables: {e}")
+            return {}
+    
+    async def _generate_from_tables(self, owner_data: list[dict]) -> str:
+        """Generate a rumor base by randomly filling a template with table values.
+        
+        Args:
+            owner_data: List of dicts with 'name', 'team_name', 'players' keys
+            
+        Returns:
+            A filled-in rumor template string for AI to expand upon.
+        """
+        if not self.rumor_tables or not self.rumor_tables.get("templates"):
+            return "a mysterious trade brewing in the league"
+        
+        # Pick a random template
+        template = random.choice(self.rumor_tables["templates"])
+        
+        # Find all placeholders in the template
+        import re
+        placeholders = re.findall(r"\{(\w+)\}", template)
+        
+        # Build replacement dict and track selected owners
+        replacements = {}
+        owner1_data = None
+        owner2_data = None
+        
+        for placeholder in placeholders:
+            if placeholder == "owner1":
+                if owner_data:
+                    owner1_data = random.choice(owner_data)
+                    replacements["owner1"] = owner1_data["name"]
+                else:
+                    replacements["owner1"] = "An owner"
+            elif placeholder == "owner2":
+                available = [o for o in owner_data if o != owner1_data]
+                if available:
+                    owner2_data = random.choice(available)
+                    replacements["owner2"] = owner2_data["name"]
+                else:
+                    replacements["owner2"] = "another owner"
+            elif placeholder == "player1":
+                # Pick a player from owner1's roster
+                if owner1_data and owner1_data.get("players"):
+                    replacements["player1"] = random.choice(owner1_data["players"])
+                else:
+                    replacements["player1"] = "a key player"
+            elif placeholder == "player2":
+                # Pick a player from owner2's roster (or random)
+                if owner2_data and owner2_data.get("players"):
+                    replacements["player2"] = random.choice(owner2_data["players"])
+                elif owner1_data and owner1_data.get("players"):
+                    replacements["player2"] = random.choice(owner1_data["players"])
+                else:
+                    replacements["player2"] = "a sleeper pickup"
+            elif placeholder == "random_player":
+                # Pick any player from any roster
+                all_players = [p for o in owner_data for p in o.get("players", [])]
+                replacements["random_player"] = random.choice(all_players) if all_players else "a breakout candidate"
+            elif placeholder in self.rumor_tables:
+                # Fill from the corresponding table
+                replacements[placeholder] = random.choice(self.rumor_tables[placeholder])
+            else:
+                # Unknown placeholder, leave empty
+                replacements[placeholder] = f"[{placeholder}]"
+        
+        # Fill in the template
+        try:
+            return template.format(**replacements)
+        except Exception as e:
+            logger.error(f"Error filling rumor template: {e}")
+            return template
+    
+    async def _get_owner_data_for_rumors(self) -> list[dict]:
+        """Build owner data with roster player names for rumor generation."""
+        registry = get_member_registry()
+        
+        try:
+            rosters = await self.bot.sleeper.get_rosters(self.league_id)
+            users = await self.bot.sleeper.get_users(self.league_id)
+            players = await self.bot.sleeper.get_all_players()
+            
+            # Build user lookup
+            user_lookup = {u["user_id"]: u for u in users}
+            
+            owner_data = []
+            for roster in rosters:
+                owner_id = roster.get("owner_id")
+                user = user_lookup.get(owner_id, {})
+                
+                # Get member from registry
+                member = registry.find_by_sleeper_id(owner_id)
+                owner_name = member.name if member else user.get("display_name", "Unknown")
+                team_name = user.get("metadata", {}).get("team_name") or user.get("display_name", "")
+                
+                # Get top player names from roster (starters + some bench)
+                roster_players = roster.get("players", [])[:15]  # Top 15 players
+                player_names = []
+                for pid in roster_players:
+                    p = players.get(pid, {})
+                    name = p.get("full_name")
+                    if name:
+                        player_names.append(name)
+                
+                owner_data.append({
+                    "name": owner_name,
+                    "team_name": team_name,
+                    "players": player_names,
+                })
+            
+            return owner_data
+        except Exception as e:
+            logger.error(f"Failed to get owner data: {e}")
+            return [{"name": m.name, "team_name": "", "players": []} for m in registry.members]
     
     async def cog_load(self) -> None:
         """Called when the cog is loaded."""
@@ -607,23 +736,24 @@ class LeagueRumors(commands.Cog):
         self,
         interaction: discord.Interaction,
     ) -> None:
-        """Admin command to force a random rumor post."""
+        """Admin command to force a random rumor post using table-based generation."""
         await interaction.response.defer(ephemeral=True)
         
-        topics = self.config.get("random_topics", [])
-        if not topics:
-            await interaction.followup.send("No random topics configured.", ephemeral=True)
-            return
+        # Get owner data with roster players from Sleeper
+        owner_data = await self._get_owner_data_for_rumors()
         
-        topic = random.choice(topics)
+        # Generate a specific rumor from tables (with real player names!)
+        rumor_seed = await self._generate_from_tables(owner_data)
+        
+        # Pick a random reporter
         reporter_name, reporter_style, emoji = self._get_random_reporter()
-        team_names = await self._get_team_names()
         member_context = await self._get_roster_context()
         
         try:
+            # Have AI expand on the generated seed
             rumor = await self.ai_client.generate_random_rumor(
-                topic=topic,
-                team_names=team_names,
+                topic=rumor_seed,  # Pass the filled template as the topic
+                team_names=await self._get_team_names(),
                 reporter_name=reporter_name,
                 reporter_style=reporter_style,
                 member_context=member_context,
@@ -638,7 +768,8 @@ class LeagueRumors(commands.Cog):
                 
                 if success:
                     await interaction.followup.send(
-                        f"✅ Random rumor posted by {reporter_name}!",
+                        f"✅ Random rumor posted by {reporter_name}!\n"
+                        f"**Seed:** {rumor_seed[:100]}...",
                         ephemeral=True,
                     )
                 else:

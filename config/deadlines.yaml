@@ -1,0 +1,239 @@
+deadlines:
+# =========================================================================
+# OFF-SEASON DEADLINES
+# =========================================================================
+
+# Rule proposals open 2 weeks before Super Bowl
+- id: rule_proposals_open
+  name: Rule Proposals Open
+  description: "🗳️ Rule proposals are now OPEN! Submit any rule changes you'd like the league to vote on. Proposals close 1 week after the Super Bowl."
+  date: null
+  relative_to: super_bowl
+  offset_days: -14  # 2 weeks before Super Bowl
+  reminders:
+  - 0  # Same day announcement
+  state: off_season
+  enabled: true
+  announce: true  # Post to announcements channel
+  ping_role: true  # Ping @Active Owner
+
+# Rule proposals deadline is 1 week after Super Bowl
+- id: rule_proposals_deadline
+  name: Rule Proposals Deadline
+  description: "⏰ LAST CALL for rule proposals! All proposals must be submitted by end of day. Voting begins soon."
+  date: null
+  relative_to: super_bowl
+  offset_days: 7  # 1 week after Super Bowl
+  reminders:
+  - 3
+  - 1
+  - 0
+  state: off_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+# Rule voting ends when March starts
+- id: rule_voting_ends
+  name: Rule Voting Ends
+  description: "🗳️ Final day to cast votes on rule changes! Voting ends at midnight."
+  date: '2026-03-01'
+  recurring: yearly
+  month: 3
+  day: 1
+  reminders:
+  - 7
+  - 1
+  - 0
+  state: off_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+- id: reactivate_league
+  name: Reactivate League on Sleeper
+  description: Renew the league on Sleeper after the Super Bowl. Trades are frozen until this is done.
+  date: null
+  relative_to: super_bowl
+  offset_days: 1
+  reminders:
+  - 0
+  state: off_season
+  enabled: true
+  ping_commissioner: true
+
+- id: rivalries_realignment
+  name: Rivalries Realignment Review
+  description: Every 5 years - opportunity for rivalry realignment based on postseason matchup frequency.
+  date: '2025-02-01'
+  recurring: every_5_years
+  base_year: 2025
+  reminders:
+  - 7
+  - 1
+  - 0
+  state: off_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+- id: draft_house
+  name: Schedule Draft House
+  description: Coordinate the draft house gathering for the rookie draft.
+  date: null
+  recurring: yearly
+  month: 3
+  day: 1
+  reminders:
+  - 1
+  - 0
+  state: off_season
+  enabled: true
+  ping_commissioner: true
+
+# Draft preview gets auto-posted 1 week before draft
+- id: draft_preview
+  name: Draft Preview
+  description: "📊 Draft capital leaderboard! See who has the most picks heading into the draft."
+  date: null
+  relative_to: rookie_draft
+  offset_days: -7  # 1 week before draft
+  reminders:
+  - 0
+  state: off_season
+  enabled: true
+  announce: true
+  ping_role: true
+  auto_post_preview: true  # Special flag to auto-generate draft capital post
+
+- id: league_dues
+  name: League Dues Due
+  description: "$10 dues must be paid before the draft. You cannot draft without paying!"
+  date: null
+  relative_to: rookie_draft
+  offset_days: -7
+  reminders:
+  - 7
+  - 1
+  - 0
+  state: off_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+
+- id: rookie_draft
+  name: Rookie Draft
+  description: "🏈 The annual 5-round supplemental draft begins! Each owner has 24 hours per pick."
+  date: null  # Synced from Sleeper via /sync_sleeper
+  recurring: yearly
+  reminders:
+  - 7
+  - 1
+  - 0
+  state: off_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+# =========================================================================
+# PRE-SEASON DEADLINES
+# =========================================================================
+
+- id: faab_opens
+  name: FAAB/Waivers Open
+  description: "💰 Kohl's Cash waivers open at 3 AM! $200 awarded to every team."
+  date: null
+  relative_to: rookie_draft
+  offset_days: 2
+  reminders:
+  - 1
+  - 0
+  state: pre_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+- id: update_schedule
+  name: Update Schedule with Rivalries
+  description: Ensure rivalry week (Week 14) and division matchups are properly configured in Sleeper.
+  date: null
+  relative_to: nfl_regular_season_start
+  offset_days: -3
+  reminders:
+  - 0
+  state: pre_season
+  enabled: true
+  ping_commissioner: true
+
+- id: roster_cutdown
+  name: Roster Cutdown
+  description: "✂️ Remove 5 temporary bench spots - back to 18 bench players. Cut your roster!"
+  date: null
+  relative_to: nfl_regular_season_start
+  offset_days: -7
+  reminders:
+  - 3
+  - 1
+  - 0
+  state: pre_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+- id: taxi_decisions
+  name: Taxi Squad Decisions
+  description: "🚕 Finalize your taxi squad before NFL Week 1! Sleeper enforces the deadline at start of regular season."
+  date: null
+  relative_to: nfl_regular_season_start
+  offset_days: -1
+  reminders:
+  - 3
+  - 1
+  - 0
+  state: pre_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+# =========================================================================
+# IN-SEASON DEADLINES
+# =========================================================================
+
+- id: trade_deadline
+  name: Trade Deadline
+  description: "⏰ No trades allowed from Week 12 until the league is renewed after the Super Bowl!"
+  date: null
+  relative_to: nfl_week_12_end
+  offset_days: 0
+  reminders:
+  - 7
+  - 3
+  - 1
+  - 0
+  state: in_season
+  enabled: true
+  announce: true
+  ping_role: true
+
+- id: power_rankings_weekly
+  name: Power Rankings Due
+  description: "Commissioner must post power rankings before Thursday night or get ICED! 🧊"
+  recurring: weekly_in_season
+  day_of_week: thursday
+  time: '18:00'
+  reminders:
+  - 0
+  state: in_season
+  enabled: true
+  ping_commissioner: true
+
+# =========================================================================
+# NFL Schedule Anchors (auto-populated via /sync_nfl)
+# =========================================================================
+nfl_anchors:
+  super_bowl: '2025-02-09'
+  nfl_preseason_start: '2025-07-31'
+  nfl_preseason_end: '2025-08-28'
+  nfl_regular_season_start: '2025-09-04'
+  nfl_week_12_end: '2025-11-24'

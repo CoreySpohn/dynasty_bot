@@ -68,6 +68,7 @@ class Database:
                 raid_date TEXT NOT NULL,
                 week INTEGER NOT NULL,
                 season INTEGER NOT NULL,
+                status TEXT DEFAULT 'pending',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -116,7 +117,166 @@ class Database:
             )
         """)
         
+        # Deadline completion tracking
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS deadline_completions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                deadline_id TEXT NOT NULL,
+                season INTEGER NOT NULL,
+                completed_at TEXT NOT NULL,
+                completed_by TEXT,
+                notes TEXT,
+                UNIQUE(deadline_id, season)
+            )
+        """)
+        
+        # Reminder history (avoid duplicate sends)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS reminder_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                deadline_id TEXT NOT NULL,
+                season INTEGER NOT NULL,
+                days_before INTEGER NOT NULL,
+                sent_at TEXT NOT NULL,
+                message_id TEXT,
+                UNIQUE(deadline_id, season, days_before)
+            )
+        """)
+        
+        # =====================================================================
+        # Kohl's Cash Tables
+        # =====================================================================
+        
+        # Kohl's Cash balances
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS kohls_balances (
+                owner_id TEXT PRIMARY KEY,
+                balance INTEGER DEFAULT 0,
+                season INTEGER NOT NULL,
+                last_updated TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Playoff games with betting lines
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS kohls_games (
+                game_id TEXT PRIMARY KEY,
+                home_team TEXT NOT NULL,
+                away_team TEXT NOT NULL,
+                spread REAL,
+                kickoff TEXT NOT NULL,
+                status TEXT DEFAULT 'open',
+                home_score INTEGER,
+                away_score INTEGER,
+                thread_id TEXT,
+                season INTEGER NOT NULL
+            )
+        """)
+        
+        # Bets placed
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS kohls_bets (
+                bet_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id TEXT NOT NULL,
+                game_id TEXT NOT NULL,
+                pick TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                result TEXT DEFAULT 'pending',
+                payout INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (game_id) REFERENCES kohls_games(game_id)
+            )
+        """)
+        
+        # Store purchases
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS kohls_purchases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                target_id TEXT,
+                custom_text TEXT,
+                remaining_uses INTEGER DEFAULT 0,
+                cost INTEGER NOT NULL,
+                purchased_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                expires_at TEXT
+            )
+        """)
+        
+        # Targeted responses (secret punishments)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS kohls_targeted_responses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_discord_id TEXT NOT NULL,
+                response_text TEXT NOT NULL,
+                chance INTEGER DEFAULT 10,
+                remaining_activations INTEGER NOT NULL,
+                buyer_id TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Transaction ledger - append-only, single source of truth for balances
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS kohls_transactions (
+                tx_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                tx_type TEXT NOT NULL,
+                reference_id TEXT,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Prop bets (totals, player props)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS kohls_props (
+                prop_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id TEXT NOT NULL,
+                market_key TEXT NOT NULL,
+                description TEXT NOT NULL,
+                line REAL,
+                outcome TEXT NOT NULL,
+                odds INTEGER DEFAULT -110,
+                status TEXT DEFAULT 'open',
+                result TEXT,
+                FOREIGN KEY (game_id) REFERENCES kohls_games(game_id)
+            )
+        """)
+        
+        # Prop bets placed
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS kohls_prop_bets (
+                bet_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id TEXT NOT NULL,
+                prop_id INTEGER NOT NULL,
+                amount INTEGER NOT NULL,
+                result TEXT DEFAULT 'pending',
+                payout INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (prop_id) REFERENCES kohls_props(prop_id)
+            )
+        """)
+        
+        # Response proposals (voting on new bot responses)
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS response_proposals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                chance INTEGER NOT NULL,
+                proposer_id TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         await self.connection.commit()
+
+
 
 
 # Global database instance

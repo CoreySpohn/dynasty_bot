@@ -1,10 +1,16 @@
 # League Members Configuration
 # Maps all known identities for each league member
+# 
+# sleeper_id: Sleeper user ID (primary identifier)
+# roster_id: Sleeper roster number (1-12)
+# discord_id: Discord user ID
 
 members:
   - name: "Corey"
     discord_id: "340933541825216524"
     discord_name: "omnipotentspoon"
+    sleeper_id: "234467188247883776"
+    roster_id: 1
     sleeper_usernames:
       - "Omnipotentspoon"
     sleeper_team_names:
@@ -12,20 +18,11 @@ members:
     nicknames: []
     notes: "League commissioner"
 
-  - name: "Fuzzy"
-    discord_id: "432261112277499934"
-    discord_name: "fuzzymcw"
-    sleeper_usernames:
-      - "DaFuzz"
-    sleeper_team_names:
-      - "Wolfe Packe"
-    nicknames:
-      - "FuzzyMcW"
-    notes: ""
-
   - name: "Rob Jr."
     discord_id: "387478369953906690"
     discord_name: "cifra00"
+    sleeper_id: "438058066672349184"
+    roster_id: 2
     sleeper_usernames:
       - "cifra00"
     sleeper_team_names:
@@ -35,9 +32,24 @@ members:
       - "Junior"
     notes: "Son of Rob Sr."
 
+  - name: "Fuzzy"
+    discord_id: "432261112277499934"
+    discord_name: "fuzzymcw"
+    sleeper_id: "434181091230740480"
+    roster_id: 3
+    sleeper_usernames:
+      - "DaFuzz"
+    sleeper_team_names:
+      - "Wolfe Packe"
+    nicknames:
+      - "FuzzyMcW"
+    notes: ""
+
   - name: "Aneesh"
     discord_id: "692042252943491082"
     discord_name: "ezmoneybagz"
+    sleeper_id: "438064207879991296"
+    roster_id: 4
     sleeper_usernames:
       - "EZMoneyBagZ"
     sleeper_team_names:
@@ -48,6 +60,8 @@ members:
   - name: "Grant"
     discord_id: "680235711454380097"
     discord_name: "the_grex"
+    sleeper_id: "438129847227641856"
+    roster_id: 5
     sleeper_usernames:
       - "TheGRex"
     sleeper_team_names: []
@@ -56,9 +70,24 @@ members:
       - "the_grex"
     notes: ""
 
+  - name: "Noah"
+    discord_id: "342429916442394626"
+    discord_name: "slapjacks13"
+    sleeper_id: "735529905395245056"
+    roster_id: 6
+    sleeper_usernames:
+      - "slapjacks10"
+      - "slapjacks13"
+    sleeper_team_names:
+      - "Tight End Jail"
+    nicknames: []
+    notes: ""
+
   - name: "Aaron"
     discord_id: "427984698057162773"
     discord_name: "arrowmac"
+    sleeper_id: "438532846966009856"
+    roster_id: 7
     sleeper_usernames:
       - "ArrowMac"
     sleeper_team_names:
@@ -70,6 +99,8 @@ members:
   - name: "James"
     discord_id: "426896949568995328"
     discord_name: "s0lux"
+    sleeper_id: "438534022604255232"
+    roster_id: 8
     sleeper_usernames:
       - "Solux"
     sleeper_team_names:
@@ -81,6 +112,8 @@ members:
   - name: "David"
     discord_id: "729930407260454954"
     discord_name: "davidd3."
+    sleeper_id: "438535501360656384"
+    roster_id: 9
     sleeper_usernames:
       - "david3"
     sleeper_team_names:
@@ -89,32 +122,11 @@ members:
       - "david3"
     notes: ""
 
-  - name: "Rob Sr."
-    discord_id: "1014595899109949520"
-    discord_name: "grizzledvet"
-    sleeper_usernames:
-      - "GrizzledVets"
-    sleeper_team_names:
-      - "Revived Grizzled Vets!"
-    nicknames:
-      - "Grizzled Vet"
-      - "Senior"
-    notes: "Father of Rob Jr."
-
-  - name: "Noah"
-    discord_id: "342429916442394626"
-    discord_name: "slapjacks13"
-    sleeper_usernames:
-      - "slapjacks10"
-      - "slapjacks13"
-    sleeper_team_names:
-      - "Tight End Jail"
-    nicknames: []
-    notes: ""
-
   - name: "Kalani"
     discord_id: "186391981889421312"
     discord_name: "kalanidanasrivera"
+    sleeper_id: "438544559685758976"
+    roster_id: 10
     sleeper_usernames:
       - "megalodon3000"
       - "kalanidanasrivera"
@@ -127,6 +139,8 @@ members:
   - name: "Brendan"
     discord_id: "467544376588107777"
     discord_name: "caseratops"
+    sleeper_id: "607460738243584000"
+    roster_id: 11
     sleeper_usernames:
       - "bcaseria"
       - "Caseratops"
@@ -135,5 +149,19 @@ members:
     nicknames:
       - "Caseratops"
     notes: ""
+
+  - name: "Rob Sr."
+    discord_id: "1014595899109949520"
+    discord_name: "grizzledvet"
+    sleeper_id: "439419833914748928"
+    roster_id: 12
+    sleeper_usernames:
+      - "GrizzledVets"
+    sleeper_team_names:
+      - "Revived Grizzled Vets!"
+    nicknames:
+      - "Grizzled Vet"
+      - "Senior"
+    notes: "Father of Rob Jr."
 
 former_members: []

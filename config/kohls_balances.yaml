@@ -1,0 +1,17 @@
+# Kohl's Cash Balances
+# Use member names from config/members.yaml
+# Run /kohls loadbalances to import into database
+
+balances:
+  Corey: 207
+  Fuzzy: 0
+  "Rob Jr.": 10
+  Aneesh: 175
+  Grant: 230
+  Aaron: 198
+  James: 201
+  David: 93
+  "Rob Sr.": 291
+  Noah: 200
+  Kalani: 347
+  Brendan: 10

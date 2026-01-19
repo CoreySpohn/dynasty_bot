@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING, Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from config import ALERT_CHANNEL_ID, SLEEPER_LEAGUE_ID
 from database import db
+from lib.members import get_member_registry
 
 if TYPE_CHECKING:
     from main import DynastyBot
@@ -72,6 +73,68 @@ class TaxiRaiding(commands.Cog):
     async def cog_load(self) -> None:
         """Called when the cog is loaded."""
         logger.info("Taxi Raiding cog loaded")
+        # Start the reminder loop
+        self.raid_reminder_loop.start()
+    
+    async def cog_unload(self) -> None:
+        """Called when the cog is unloaded."""
+        self.raid_reminder_loop.cancel()
+    
+    @tasks.loop(hours=24)
+    async def raid_reminder_loop(self) -> None:
+        """Check pending raids every 24 hours and send reminders."""
+        try:
+            # Get pending raids from database
+            async with db.connection.execute("""
+                SELECT id, raider_user_id, victim_user_id, player_id, player_name, raid_date
+                FROM raids
+                WHERE status = 'pending'
+            """) as cursor:
+                pending = await cursor.fetchall()
+            
+            if not pending:
+                return
+            
+            registry = get_member_registry()
+            
+            for raid_id, raider_id, victim_sleeper_id, player_id, player_name, raid_date in pending:
+                # Check if player is still on victim's taxi squad
+                result = await self._find_taxi_player_owner(player_id)
+                
+                if not result:
+                    # Player no longer on taxi - raid completed or player moved
+                    await db.connection.execute(
+                        "UPDATE raids SET status = 'completed' WHERE id = ?",
+                        (raid_id,)
+                    )
+                    await db.connection.commit()
+                    logger.info(f"Raid {raid_id} marked completed - player {player_name} no longer on taxi")
+                    continue
+                
+                # Player still on taxi - send reminder
+                if ALERT_CHANNEL_ID:
+                    channel = self.bot.get_channel(ALERT_CHANNEL_ID)
+                    if channel:
+                        # Find victim's Discord ID
+                        victim_member = registry.find_by_sleeper_id(victim_sleeper_id)
+                        victim_mention = f"<@{victim_member.discord_id}>" if victim_member else "Owner"
+                        
+                        # Find raider mention
+                        raider_mention = f"<@{raider_id}>"
+                        
+                        await channel.send(
+                            f"⏰ **RAID REMINDER** ⏰\n"
+                            f"{victim_mention} - **{player_name}** is still being raided by {raider_mention}!\n"
+                            f"The player must be moved off your taxi squad."
+                        )
+                        logger.info(f"Sent raid reminder for {player_name}")
+        except Exception as e:
+            logger.error(f"Error in raid reminder loop: {e}")
+    
+    @raid_reminder_loop.before_loop
+    async def before_raid_reminder(self) -> None:
+        """Wait for bot to be ready before starting loop."""
+        await self.bot.wait_until_ready()
     
     async def _build_player_name_cache(self) -> None:
         """Build a lowercase name -> player_id lookup cache."""
@@ -291,15 +354,26 @@ class TaxiRaiding(commands.Cog):
             
             await interaction.followup.send(embed=embed)
             
-            # Also send to alert channel if configured
+            # Also send to alert channel if configured - with Discord mentions!
             if ALERT_CHANNEL_ID:
                 channel = self.bot.get_channel(ALERT_CHANNEL_ID)
                 if channel:
+                    # Look up Discord IDs from member registry
+                    registry = get_member_registry()
+                    
+                    # Find victim's Discord ID by Sleeper user ID
+                    victim_member = registry.find_by_sleeper_id(victim_user_id)
+                    victim_mention = f"<@{victim_member.discord_id}>" if victim_member else victim_name
+                    
+                    # Raider is the Discord user who ran the command
+                    raider_mention = f"<@{raider_id}>"
+                    
                     await channel.send(
-                        f"🚨 **TAXI RAID** {raider_name} is raiding **{full_name}** "
-                        f"from {victim_name}'s taxi squad!\n"
+                        f"🚨 **TAXI RAID** 🚨\n"
+                        f"{raider_mention} is raiding **{full_name}** from {victim_mention}'s taxi squad!\n"
                         f"📋 Draft Origin: {draft_display}\n"
-                        f"💰 Cost: **{cost_text}**"
+                        f"💰 Cost: **{cost_text}**\n\n"
+                        f"{victim_mention} - you must move this player off your taxi squad!"
                     )
             
         except Exception as e:

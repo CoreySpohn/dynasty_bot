@@ -110,12 +110,15 @@ Write the report AS {reporter_name} (stay in character!):"""
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    max_output_tokens=350,
-                    temperature=1.0,  # Higher temperature for more personality variation
+                    max_output_tokens=1000,
+                    temperature=1.0,
+                    # Limit thinking to prevent it from eating all output tokens
+                    thinking_config=types.ThinkingConfig(thinking_budget=1024),
                 ),
             )
             
-            return response.text.strip()
+            text = response.text.strip() if response.text else ""
+            return text
             
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
@@ -173,8 +176,9 @@ Write the rumor as {reporter_name}:"""
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    max_output_tokens=300,
-                    temperature=1.0,  # Maximum creativity for fake rumors
+                    max_output_tokens=1000,
+                    temperature=1.0,
+                    thinking_config=types.ThinkingConfig(thinking_budget=1024),
                 ),
             )
             

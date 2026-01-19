@@ -1,0 +1,24 @@
+# Random Auto-Responses Configuration
+# Each response has a probability expressed as "1 in X" chance per message
+#
+# Format:
+#   - text: "The response text"
+#     chance: 1000  # 1 in 1000 chance (0.1%)
+#     added_by: "username"  # Who added this response
+
+responses:
+- added_by: Corey
+  chance: 1000
+  text: Jesus Christ who the fuck cares?
+- added_by: Corey
+  chance: 1000
+  text: that's what she said
+- added_by: Corey
+  chance: 1000
+  text: Sir, this is a fantasy football league
+- added_by: Corey
+  chance: 1000
+  text: 'Counterpoint: no'
+- added_by: Corey
+  chance: 1000
+  text: you sure about that?

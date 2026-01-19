@@ -6,6 +6,12 @@ Future feature ideas for the Dynasty Fantasy Football Discord Bot.
 
 ## 🎰 Fun & Games
 
+### Rework the auto-rumor generation
+It's currently commented out and was posting very generic rumors that didn't have anything to do with the league. It should be reworked to be more engaging and relevant to the league.
+
+### Custom Reporters + prompts
+The rumor feature doesn't currently allow for very customized prompts but it should allow the user to specify more details like a custom personality, key phrases that *must* be included, and whatnot.
+
 ### Trash Talk Generator
 `/trashtalk @opponent` - AI-powered smack talk for your weekly matchup.
 
@@ -19,6 +25,7 @@ Bot predicts each matchup winner with confidence %, tracks accuracy over the sea
 
 ### Fantasy Roulette
 Random start/sit advice when you can't decide (with a disclaimer!).
+
 
 ---
 
@@ -99,6 +106,9 @@ Bot posts a meme, league votes on best caption.
 
 ## 🔧 Utility Features
 
+### Proper tagging on Discord
+Make sure bot alerts like taxi squad raiding or lineup alerts are tagging the proper Discord users who are relevant, and that when necessary the bot will follow up if a deadline is approaching or has been missed.
+
 ### Waiver Wire Alerts
 Notify when specific players are dropped to waivers.
 
@@ -110,6 +120,7 @@ Auto-generate draft grades and hot takes after rookie drafts.
 
 ### Weekly Newsletter
 Auto-generated league newsletter with recaps, standings, and drama.
+
 
 ---
 

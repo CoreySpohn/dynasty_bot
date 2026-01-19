@@ -1,0 +1,303 @@
+# Rumor Generator Random Tables
+# These tables are used to construct specific, league-relevant rumors
+# by randomly combining elements for AI to expand upon
+
+# The rumor generator picks ONE template and fills in the blanks
+# with random selections from the appropriate tables
+
+templates:
+  # Trade rumors
+  - "{owner1} has been secretly texting {owner2} about a blockbuster trade involving {trade_asset}"
+  - "Sources close to {owner1} say they're willing to move {trade_asset} for the right price"
+  - "{owner1} and {owner2} have been in deep trade negotiations. {trade_drama}"
+  - "BREAKING: {owner1} is shopping {trade_asset}. Multiple teams have shown interest."
+  - "{owner1} reportedly turned down a massive offer from {owner2}. {reaction}"
+  
+  # Player-specific trade rumors (uses real roster players!)
+  - "{owner1} is reportedly shopping {player1}. {owner2} has shown interest. {trade_drama}"
+  - "Multiple sources confirm {owner2} has been asking about {player1}. {owner1} hasn't responded."
+  - "BREAKING: {owner1} is fielding offers for {player1}. {speculation}"
+  - "{owner1} and {owner2} have been negotiating a swap of {player1} and {player2}. {trade_drama}"
+  - "Sources say {owner1} values {player1} as untouchable. {owner2} is trying anyway."
+  
+  # Player performance rumors
+  - "{owner1} is worried about {player1}'s production. {speculation}"
+  - "Insiders say {owner1} is concerned about {player1}. Benching incoming?"
+  - "{owner1} can't believe what {player1} did last week. {reaction}"
+  - "{random_player} is on {owner1}'s radar. A trade could be brewing."
+  - "{owner1} has been hyping up {player1} all week. {mock_response}"
+  
+  # Roster construction
+  - "{owner1}'s decision to start {player1} over {player2} has raised eyebrows. {reaction}"
+  - "Sources say {owner1} regrets benching {player1} last week. {regret_detail}"
+  - "{owner1} is reportedly obsessed with acquiring {random_player}. {speculation}"
+  - "League insiders say {player1} is the most undervalued player on {owner1}'s roster."
+  - "{owner1} believes {player1} is about to break out. {mock_response}"
+  
+  # Draft strategy
+  - "{owner1} has their eye on {draft_target_type} in the upcoming draft. {draft_reason}"
+  - "Sources say {owner1} is planning to trade up in the draft. They want {draft_target_type}."
+  - "{owner1} is going all-in on {position} this draft. {draft_reason}"
+  - "Insiders say {owner1} regrets not drafting {position} last year. {reaction}"
+  
+  # Roster moves
+  - "{owner1} was spotted frantically checking the waiver wire at {time_of_day}. {speculation}"
+  - "{owner1} is considering dropping {roster_move_reason}. The fanbase is divided."
+  - "Multiple sources confirm {owner1} is rostering players they have never started. {speculation}"
+  - "{owner1}'s bench is {bench_state}. {reaction}"
+  
+  # Team performance
+  - "{owner1}'s playoff hopes are {playoff_status}. {reaction}"
+  - "Power rankings have {owner1} at {ranking_position}. They're reportedly {reaction_emotion}."
+  - "{owner1} had a {performance_adj} week. {mock_quote}"
+  - "{owner1} beat {owner2} by {margin_type}. {trash_talk}"
+  - "{owner1} lost to {owner2} despite {despite_reason}. {condolence}"
+  
+  # Drama and controversy
+  - "Tensions are rising between {owner1} and {owner2} after {drama_reason}."
+  - "{owner1} was overheard saying \"{mock_quote}\" about {owner2}'s team."
+  - "The league is BUZZING after {owner1}'s {controversial_move}. {reaction}"
+  - "{owner1} has been suspiciously quiet this week. {speculation}"
+  - "Anonymous sources claim {owner1} is {accusation}. They deny everything."
+  
+  # Wishful thinking / Predictions
+  - "{owner1} believes they're going to win the championship this year. {mock_response}"
+  - "Bold prediction: {owner1} will finish {prediction_outcome}. {justification}"
+  - "{owner1} is already planning their victory parade. {mock_response}"
+  
+  # Regret and hindsight
+  - "{owner1} is STILL thinking about that trade they made last {timeframe}. {regret_detail}"
+  - "Sources say {owner1} cries themselves to sleep thinking about {regret_player_type}."
+  - "{owner1} could have had {draft_target_type} but passed. {reaction}"
+
+# Fill-in tables
+trade_asset:
+  - "their first-round pick"
+  - "their entire draft capital"
+  - "their star QB"
+  - "multiple starters"
+  - "their rookie sensation"
+  - "a 'future Hall of Famer' (their words)"
+  - "literally anyone on their roster"
+  - "players they probably shouldn't trade"
+
+trade_drama:
+  - "Neither side is budging."
+  - "A deal could be imminent."
+  - "Talks have reportedly stalled over draft pick compensation."
+  - "Both sides walked away, but may return."
+  - "The whole league is watching."
+  - "It's getting HEATED."
+  - "This could reshape the league."
+
+draft_target_type:
+  - "a generational QB prospect"
+  - "the top RB available"
+  - "a young WR with upside"
+  - "a TE who can actually catch"
+  - "anyone who isn't injured"
+  - "depth at every position"
+  - "the next Justin Jefferson"
+  - "literally anyone with a pulse"
+
+draft_reason:
+  - "Their current depth is concerning."
+  - "They need to get younger."
+  - "Their championship window is NOW."
+  - "They're building for the future."
+  - "Desperation has set in."
+  - "They saw something on film."
+  - "The analytics told them to."
+
+position:
+  - "QB"
+  - "RB"
+  - "WR"
+  - "TE"
+  - "rookies"
+  - "handcuffs"
+  - "lottery tickets"
+
+time_of_day:
+  - "3 AM"
+  - "during their kid's soccer game"
+  - "at a wedding"
+  - "in a work meeting"
+  - "while driving"
+  - "at church"
+  - "during a date"
+
+roster_move_reason:
+  - "half their bench"
+  - "a player they JUST traded for"
+  - "their former first-round pick"
+  - "someone they called 'untouchable' last month"
+  - "a player with one good game"
+  - "depth they desperately need"
+
+bench_state:
+  - "absolutely STACKED"
+  - "a graveyard of injured players"
+  - "full of handcuffs no one wants"
+  - "somehow better than their starters"
+  - "a complete mystery"
+  - "outscoring their starters weekly"
+
+speculation:
+  - "Something big is brewing."
+  - "We can only speculate what this means."
+  - "Experts are divided on what this means."
+  - "The league is watching closely."
+  - "This could be nothing. Or everything."
+  - "More to come as this develops."
+
+playoff_status:
+  - "hanging by a thread"
+  - "all but secured"
+  - "mathematically alive but spiritually dead"
+  - "looking surprisingly good"
+  - "completely in their own hands"
+  - "dependent on a miracle"
+  - "over. It's just over."
+
+ranking_position:
+  - "dead last"
+  - "surprisingly high"
+  - "exactly where expected"
+  - "#1 overall"
+  - "rising fast"
+  - "falling hard"
+  - "criminally underrated"
+
+reaction_emotion:
+  - "furious"
+  - "thrilled"
+  - "in denial"
+  - "plotting revenge"
+  - "celebrating prematurely"
+  - "completely unbothered"
+  - "sending angry DMs"
+
+performance_adj:
+  - "historically bad"
+  - "record-breaking"
+  - "painfully average"
+  - "surprisingly dominant"
+  - "disappointing"
+  - "fluky"
+  - "statement-making"
+
+margin_type:
+  - "0.3 points"
+  - "50+ points"
+  - "the smallest margin in league history"
+  - "an embarrassing margin"
+  - "a buzzer-beater stat correction"
+  - "pure luck"
+
+trash_talk:
+  - "Trash talk is expected."
+  - "The group chat was LIT."
+  - "Celebrations were... excessive."
+  - "Humble in victory. Just kidding."
+  - "The winner has been unbearable since."
+
+despite_reason:
+  - "having the highest-scoring bench"
+  - "starting all the 'right' players"
+  - "trash talking all week"
+  - "being the heavy favorite"
+  - "their opponent forgetting to set their lineup"
+
+condolence:
+  - "Thoughts and prayers."
+  - "Pain. Just pain."
+  - "Sometimes fantasy football is cruel."
+  - "The fantasy gods are unkind."
+  - "There's always next week. Or next year."
+
+drama_reason:
+  - "a trade veto controversy"
+  - "a suspicious last-minute lineup change"
+  - "THAT group chat message"
+  - "a waiver wire snipe"
+  - "a disputed league rule"
+  - "someone talking too much trash"
+
+controversial_move:
+  - "questionable starting lineup"
+  - "bizarre trade proposal"
+  - "3 AM roster moves"
+  - "attempt to change league rules mid-season"
+  - "public trade demands"
+  - "cryptic group chat post"
+
+accusation:
+  - "tanking"
+  - "colluding"
+  - "using insider information"
+  - "checking fantasy during important life events"
+  - "caring too much"
+  - "not caring enough"
+  - "making trades for the content"
+
+mock_quote:
+  - "I knew this would happen."
+  - "My team is better than their record shows."
+  - "It's a rebuilding year anyway."
+  - "Fantasy football is all luck."
+  - "I just need one more trade..."
+  - "Wait until my players are healthy."
+  - "The refs cost me that game."
+
+mock_response:
+  - "Nobody believes them."
+  - "The league respectfully disagrees."
+  - "Bold strategy."
+  - "We'll see about that."
+  - "Sure, Jan."
+  - "OK."
+
+reaction:
+  - "The league chat went wild."
+  - "Popcorn is being prepared."
+  - "This is developing rapidly."
+  - "More at 11."
+  - "We'll be watching."
+  - "No comment from either side."
+
+prediction_outcome:
+  - "dead last"
+  - "as surprise champion"
+  - "exactly 6th place"
+  - "with the most points against"
+  - "regretting their draft"
+  - "making a miraculous run"
+
+justification:
+  - "The signs are all there."
+  - "Don't @ me."
+  - "I will not be taking questions."
+  - "You heard it here first."
+  - "Book it."
+
+timeframe:
+  - "month"
+  - "year"
+  - "offseason"
+  - "draft"
+  - "week"
+
+regret_detail:
+  - "The what-ifs are endless."
+  - "They've deleted the trade from their memory."
+  - "Hindsight is 20/20."
+  - "We've all been there."
+  - "Some wounds never heal."
+
+regret_player_type:
+  - "the player they cut too early"
+  - "the trade they rejected"
+  - "the draft pick they passed on"
+  - "the waiver claim they missed"
+  - "their former players balling out elsewhere"
