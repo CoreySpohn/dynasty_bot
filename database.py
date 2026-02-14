@@ -73,6 +73,15 @@ class Database:
             )
         """)
         
+        # Migration: Add status column if it doesn't exist (for older databases)
+        try:
+            await self.connection.execute("""
+                ALTER TABLE raids ADD COLUMN status TEXT DEFAULT 'pending'
+            """)
+            logger.info("Added 'status' column to raids table")
+        except Exception:
+            pass  # Column already exists
+        
         # Player history - tracks taxi squad player movements
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS player_history (

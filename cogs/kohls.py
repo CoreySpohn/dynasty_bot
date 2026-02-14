@@ -739,19 +739,23 @@ class KohlsCash(commands.Cog):
     @kohls.command(name="fetchgames")
     @app_commands.checks.has_permissions(administrator=True)
     async def fetch_games(self, interaction: discord.Interaction):
-        """(Admin) Fetch NFL games and spreads from The Odds API and create forum threads."""
+        """(Admin) Fetch NFL games and spreads. Use /kohls fetch_all for complete setup."""
         await interaction.response.defer(ephemeral=True)
         
+        result = await self._fetch_games_internal()
+        await interaction.followup.send(result, ephemeral=True)
+    
+    async def _fetch_games_internal(self, fetch_props: bool = False) -> str:
+        """Internal method to fetch games, optionally with props.
+        
+        Returns a status message string.
+        """
         import os
         import aiohttp
         
         api_key = os.getenv("THE_ODDS_API_KEY")
         if not api_key:
-            await interaction.followup.send(
-                "❌ THE_ODDS_API_KEY not set in .env!",
-                ephemeral=True
-            )
-            return
+            return "❌ THE_ODDS_API_KEY not set in .env!"
         
         # Get forum channel
         forum_channel = None
@@ -775,127 +779,198 @@ class KohlsCash(commands.Cog):
                 
                 # Build lookup for totals by game_id
                 totals_lookup = {t["game_id"]: t["total"] for t in totals}
-            
-            if not games:
-                await interaction.followup.send(
-                    "❌ No NFL games found (offseason?).",
-                    ephemeral=True
-                )
-                return
-            
-            season = self.config.get("season", {}).get("year", datetime.now().year)
-            added = 0
-            threads_created = 0
-            props_added = 0
-            
-            for game in games:
-                game_id = game["game_id"]
-                home_team = game["home_team"]
-                away_team = game["away_team"]
-                spread = game["spread"]
-                kickoff = game["kickoff"]
-                total = totals_lookup.get(game_id)
                 
-                # Check if game already exists
-                async with db.connection.execute(
-                    "SELECT thread_id FROM kohls_games WHERE game_id = ?", (game_id,)
-                ) as cursor:
-                    existing = await cursor.fetchone()
+                if not games:
+                    return "❌ No NFL games found (offseason?)."
                 
-                thread_id = existing[0] if existing else None
+                season = self.config.get("season", {}).get("year", datetime.now().year)
+                added = 0
+                threads_created = 0
+                props_added = 0
                 
-                # Create forum thread if we have a forum channel and no thread yet
-                if forum_channel and not thread_id and isinstance(forum_channel, discord.ForumChannel):
-                    try:
-                        # Parse kickoff for display (convert UTC to EST)
-                        kickoff_dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
-                        eastern = ZoneInfo("America/New_York")
-                        kickoff_est = kickoff_dt.astimezone(eastern)
-                        time_str = kickoff_est.strftime("%a %m/%d %I:%M %p EST")
-                        spread_str = f"+{spread}" if spread > 0 else str(spread)
-                        
-                        thread_name = f"🏈 {away_team} @ {home_team}"
-                        
-                        content = (
-                            f"# {away_team} @ {home_team}\n\n"
-                            f"**Spread:** {home_team} {spread_str}\n"
-                        )
-                        if total:
-                            content += f"**Total:** {total}\n"
-                        content += (
-                            f"**Kickoff:** {time_str}\n\n"
-                            f"---\n"
-                            f"💰 **Place your bets!**\n"
-                            f"`/kohls bet <team> <amount>` - Spread bet\n"
-                            f"`/kohls props` - View prop bets\n"
-                            f"`/kohls propbet <id> <amount>` - Prop bet\n\n"
-                            f"Bets lock at kickoff. Winners get 2x their wager!"
-                        )
-                        
-                        thread, message = await forum_channel.create_thread(
-                            name=thread_name,
-                            content=content
-                        )
-                        thread_id = thread.id
-                        threads_created += 1
-                        logger.info(f"Created forum thread for {away_team} @ {home_team}")
-                    except Exception as e:
-                        logger.error(f"Failed to create thread for {game_id}: {e}")
+                for game in games:
+                    game_id = game["game_id"]
+                    home_team = game["home_team"]
+                    away_team = game["away_team"]
+                    spread = game["spread"]
+                    kickoff = game["kickoff"]
+                    total = totals_lookup.get(game_id)
+                    
+                    # Check if game already exists
+                    async with db.connection.execute(
+                        "SELECT thread_id FROM kohls_games WHERE game_id = ?", (game_id,)
+                    ) as cursor:
+                        existing = await cursor.fetchone()
+                    
+                    thread_id = existing[0] if existing else None
+                    
+                    # Create forum thread if we have a forum channel and no thread yet
+                    if forum_channel and not thread_id and isinstance(forum_channel, discord.ForumChannel):
+                        try:
+                            # Parse kickoff for display (convert UTC to EST)
+                            kickoff_dt = datetime.fromisoformat(kickoff.replace("Z", "+00:00"))
+                            eastern = ZoneInfo("America/New_York")
+                            kickoff_est = kickoff_dt.astimezone(eastern)
+                            time_str = kickoff_est.strftime("%a %m/%d %I:%M %p EST")
+                            spread_str = f"+{spread}" if spread > 0 else str(spread)
+                            
+                            thread_name = f"🏈 {away_team} @ {home_team}"
+                            
+                            content = (
+                                f"# {away_team} @ {home_team}\n\n"
+                                f"**Spread:** {home_team} {spread_str}\n"
+                            )
+                            if total:
+                                content += f"**Total:** {total}\n"
+                            content += (
+                                f"**Kickoff:** {time_str}\n\n"
+                                f"---\n"
+                                f"💰 **Place your bets!**\n"
+                                f"`/kohls bet <team> <amount>` - Spread bet\n"
+                                f"`/kohls props` - View prop bets\n"
+                                f"`/kohls propbet <id> <amount>` - Prop bet\n\n"
+                                f"Bets lock at kickoff. Winners get 2x their wager!"
+                            )
+                            
+                            thread, message = await forum_channel.create_thread(
+                                name=thread_name,
+                                content=content
+                            )
+                            thread_id = thread.id
+                            threads_created += 1
+                            logger.info(f"Created forum thread for {away_team} @ {home_team}")
+                        except Exception as e:
+                            logger.error(f"Failed to create thread for {game_id}: {e}")
+                    
+                    # Insert or update game
+                    await db.connection.execute("""
+                        INSERT INTO kohls_games (game_id, home_team, away_team, spread, kickoff, status, thread_id, season)
+                        VALUES (?, ?, ?, ?, ?, 'open', ?, ?)
+                        ON CONFLICT(game_id) DO UPDATE SET
+                            spread = ?,
+                            kickoff = ?,
+                            thread_id = COALESCE(kohls_games.thread_id, ?),
+                            status = CASE WHEN status = 'final' THEN status ELSE 'open' END
+                    """, (
+                        game_id,
+                        home_team,
+                        away_team,
+                        spread,
+                        kickoff,
+                        thread_id,
+                        season,
+                        spread,
+                        kickoff,
+                        thread_id,
+                    ))
+                    added += 1
+                    
+                    # Add total as prop bet if available
+                    if total:
+                        for outcome in ["over", "under"]:
+                            await db.connection.execute("""
+                                INSERT OR IGNORE INTO kohls_props (game_id, market_key, description, line, outcome, odds)
+                                VALUES (?, 'totals', ?, ?, ?, -110)
+                            """, (
+                                game_id,
+                                f"{away_team} @ {home_team} {outcome.title()} {total}",
+                                total,
+                                outcome,
+                            ))
+                            props_added += 1
                 
-                # Insert or update game
-                await db.connection.execute("""
-                    INSERT INTO kohls_games (game_id, home_team, away_team, spread, kickoff, status, thread_id, season)
-                    VALUES (?, ?, ?, ?, ?, 'open', ?, ?)
-                    ON CONFLICT(game_id) DO UPDATE SET
-                        spread = ?,
-                        kickoff = ?,
-                        thread_id = COALESCE(kohls_games.thread_id, ?),
-                        status = CASE WHEN status = 'final' THEN status ELSE 'open' END
-                """, (
-                    game_id,
-                    home_team,
-                    away_team,
-                    spread,
-                    kickoff,
-                    thread_id,
-                    season,
-                    spread,
-                    kickoff,
-                    thread_id,
-                ))
-                added += 1
+                await db.connection.commit()
                 
-                # Add total as prop bet if available
-                if total:
-                    for outcome in ["over", "under"]:
-                        await db.connection.execute("""
-                            INSERT OR IGNORE INTO kohls_props (game_id, market_key, description, line, outcome, odds)
-                            VALUES (?, 'totals', ?, ?, ?, -110)
-                        """, (
-                            game_id,
-                            f"{away_team} @ {home_team} {outcome.title()} {total}",
-                            total,
-                            outcome,
-                        ))
-                        props_added += 1
+                # Now fetch player props if requested (still inside session context)
+                threads_updated = 0
+                if fetch_props:
+                    # Get all games with threads
+                    async with db.connection.execute("""
+                        SELECT game_id, home_team, away_team, thread_id
+                        FROM kohls_games
+                        WHERE status = 'open' AND thread_id IS NOT NULL
+                    """) as cursor:
+                        games_with_threads = await cursor.fetchall()
+                    
+                    for game_id, home, away, thread_id in games_with_threads:
+                        try:
+                            player_props = await client.get_player_props(game_id)
+                            
+                            if not player_props:
+                                continue
+                            
+                            game_props_added = 0
+                            for prop in player_props:
+                                result = await db.connection.execute("""
+                                    INSERT OR IGNORE INTO kohls_props (game_id, market_key, description, line, outcome, odds)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """, (
+                                    prop["game_id"],
+                                    prop["market_key"],
+                                    prop["description"],
+                                    prop["line"],
+                                    prop["outcome"],
+                                    prop["odds"],
+                                ))
+                                if result.rowcount > 0:
+                                    props_added += 1
+                                    game_props_added += 1
+                            
+                            # Post props to thread if we added new ones
+                            if game_props_added > 0 and thread_id:
+                                try:
+                                    thread = self.bot.get_channel(int(thread_id))
+                                    if not thread:
+                                        thread = await self.bot.fetch_channel(int(thread_id))
+                                    if thread:
+                                        # Get prop IDs for this game
+                                        async with db.connection.execute("""
+                                            SELECT prop_id, description, odds
+                                            FROM kohls_props
+                                            WHERE game_id = ? AND market_key != 'totals' AND status = 'open'
+                                            ORDER BY market_key, prop_id
+                                        """, (game_id,)) as cursor:
+                                            db_props = await cursor.fetchall()
+                                        
+                                        if db_props:
+                                            lines = ["🎲 **Player Props Available!**\n"]
+                                            for prop_id, desc, odds in db_props:
+                                                odds_str = f"+{odds}" if odds > 0 else str(odds)
+                                                lines.append(f"`{prop_id}` {desc} ({odds_str})")
+                                            lines.append(f"\nUse `/kohls propbet <id> <amount>` to bet!")
+                                            await thread.send("\n".join(lines))
+                                            threads_updated += 1
+                                except Exception as e:
+                                    logger.error(f"Failed to post props to thread {thread_id}: {e}")
+                        except Exception as e:
+                            logger.warning(f"Failed to get player props for {game_id}: {e}")
+                    
+                    await db.connection.commit()
             
-            await db.connection.commit()
-            
+            # Build response message
             msg = f"✅ Fetched **{added}** NFL games from The Odds API."
             if threads_created > 0:
                 msg += f"\n🧵 Created **{threads_created}** forum threads in #kohls-cashino."
             if props_added > 0:
-                msg += f"\n🎲 Added **{props_added}** total props."
+                msg += f"\n🎲 Added **{props_added}** props (totals + player props)."
+            if threads_updated > 0:
+                msg += f"\n📝 Posted props to **{threads_updated}** game threads."
             
-            await interaction.followup.send(msg, ephemeral=True)
-            logger.info(f"Fetched {added} games, created {threads_created} threads, {props_added} props")
+            logger.info(f"Fetched {added} games, created {threads_created} threads, {props_added} props, updated {threads_updated} threads")
+            return msg
             
         except Exception as e:
             logger.error(f"Failed to fetch games: {e}")
-            await interaction.followup.send(
-                f"❌ Failed to fetch games: {e}",
-                ephemeral=True
-            )
+            return f"❌ Failed to fetch games: {e}"
+    
+    @kohls.command(name="fetch_all")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def fetch_all(self, interaction: discord.Interaction):
+        """(Admin) Fetch games, create forum posts, and post all player props."""
+        await interaction.response.defer(ephemeral=True)
+        
+        result = await self._fetch_games_internal(fetch_props=True)
+        await interaction.followup.send(result, ephemeral=True)
     
     @kohls.command(name="games")
     async def list_games(self, interaction: discord.Interaction):
@@ -1444,15 +1519,29 @@ class KohlsCash(commands.Cog):
             
             for game_id, home, away, spread, status, thread_id in pending_games:
                 # Try to match with nflreadpy results
+                # Must match BOTH home and away teams to avoid wrong-week matches
                 matched_result = None
                 for result in results:
-                    # Match by team abbreviations (nflreadpy uses abbreviations)
-                    if (result['home_team'].upper() in home.upper() or 
-                        home.upper() in result['home_team'].upper()):
+                    result_home = result['home_team'].upper()
+                    result_away = result['away_team'].upper()
+                    
+                    # Check if BOTH teams match (either direction in case of data differences)
+                    home_matches = (
+                        result_home in home.upper() or 
+                        home.upper() in result_home
+                    )
+                    away_matches = (
+                        result_away in away.upper() or 
+                        away.upper() in result_away
+                    )
+                    
+                    if home_matches and away_matches:
                         matched_result = result
+                        logger.info(f"Matched game: {away} @ {home} -> {result_away} @ {result_home}")
                         break
                 
                 if not matched_result:
+                    logger.debug(f"No match found for: {away} @ {home}")
                     continue
                 
                 home_score = matched_result['home_score']
@@ -1545,7 +1634,196 @@ class KohlsCash(commands.Cog):
             
             await db.connection.commit()
             
-            if resolved_count == 0:
+            # === RESOLVE TOTALS PROP BETS ===
+            prop_results = []
+            props_resolved = 0
+            
+            # Get all pending totals by game_id
+            async with db.connection.execute("""
+                SELECT prop_id, p.game_id, p.line, p.outcome, p.description,
+                       g.home_score, g.away_score
+                FROM kohls_props p
+                JOIN kohls_games g ON p.game_id = g.game_id
+                WHERE p.market_key = 'totals' 
+                AND p.status = 'open'
+                AND g.status = 'final'
+            """) as cursor:
+                totals_props = await cursor.fetchall()
+            
+            for prop_id, game_id, line, outcome, desc, home_score, away_score in totals_props:
+                if home_score is None or away_score is None:
+                    continue
+                    
+                total_points = home_score + away_score
+                
+                # Determine result
+                if outcome == 'over':
+                    prop_result = 'won' if total_points > line else ('push' if total_points == line else 'lost')
+                else:  # under
+                    prop_result = 'won' if total_points < line else ('push' if total_points == line else 'lost')
+                
+                # Update prop status
+                await db.connection.execute(
+                    "UPDATE kohls_props SET status = 'final', result = ? WHERE prop_id = ?",
+                    (prop_result, prop_id)
+                )
+                
+                # Get bets on this prop
+                async with db.connection.execute("""
+                    SELECT bet_id, owner_id, amount
+                    FROM kohls_bets
+                    WHERE prop_id = ? AND result IS NULL
+                """, (prop_id,)) as cursor:
+                    prop_bets = await cursor.fetchall()
+                
+                prop_winners = []
+                prop_losers = []
+                
+                for bet_id, owner_id, amount in prop_bets:
+                    if prop_result == 'push':
+                        # Refund on push
+                        await self._update_balance(owner_id, amount, season)
+                        await db.connection.execute(
+                            "UPDATE kohls_bets SET result = 'push', payout = ? WHERE bet_id = ?",
+                            (amount, bet_id)
+                        )
+                    elif prop_result == 'won':
+                        payout = amount * 2
+                        await self._update_balance(owner_id, payout, season)
+                        await db.connection.execute(
+                            "UPDATE kohls_bets SET result = 'won', payout = ? WHERE bet_id = ?",
+                            (payout, bet_id)
+                        )
+                        member = registry.find_by_discord_id(owner_id)
+                        name = member.name if member else "Unknown"
+                        prop_winners.append(f"**{name}** +{amount} KC")
+                    else:
+                        await db.connection.execute(
+                            "UPDATE kohls_bets SET result = 'lost', payout = 0 WHERE bet_id = ?",
+                            (bet_id,)
+                        )
+                        member = registry.find_by_discord_id(owner_id)
+                        name = member.name if member else "Unknown"
+                        prop_losers.append(f"**{name}** -{amount} KC")
+                
+                if prop_bets:
+                    props_resolved += 1
+                    result_text = f"**{desc}** → {total_points} pts ({prop_result.upper()})"
+                    if prop_winners:
+                        result_text += f"\n  💰 {', '.join(prop_winners)}"
+                    if prop_losers:
+                        result_text += f"\n  💸 {', '.join(prop_losers)}"
+                    prop_results.append(result_text)
+            
+            await db.connection.commit()
+            
+            # === RESOLVE PLAYER PROP BETS ===
+            player_prop_results = []
+            player_props_resolved = 0
+            
+            # Get all pending player props
+            async with db.connection.execute("""
+                SELECT prop_id, game_id, market_key, description, line, outcome
+                FROM kohls_props
+                WHERE market_key IN ('player_pass_yds', 'player_rush_yds', 'player_reception_yds')
+                AND status = 'open'
+            """) as cursor:
+                player_props = await cursor.fetchall()
+            
+            # Map market_key to nflreadpy stat column
+            stat_mapping = {
+                'player_pass_yds': 'passing_yards',
+                'player_rush_yds': 'rushing_yards',
+                'player_reception_yds': 'receiving_yards',
+            }
+            
+            for prop_id, game_id, market_key, desc, line, outcome in player_props:
+                # Parse player name from description (e.g., "Patrick Mahomes Over 285.5 Pass Yds")
+                player_name = desc.split(" Over ")[0].split(" Under ")[0].strip()
+                stat_column = stat_mapping.get(market_key)
+                
+                if not stat_column:
+                    continue
+                
+                # Get player's actual stat from nflreadpy
+                stat_data = client.get_player_stat(player_name, stat_column, nfl_season)
+                
+                if stat_data is None:
+                    logger.debug(f"No stat found for {player_name} ({stat_column})")
+                    continue
+                
+                actual_stat = stat_data["stat_value"]
+                matched_name = stat_data["matched_name"]
+                week = stat_data["week"]
+                team = stat_data["team"]
+                
+                # Determine result
+                if outcome == 'over':
+                    prop_result = 'won' if actual_stat > line else ('push' if actual_stat == line else 'lost')
+                else:  # under
+                    prop_result = 'won' if actual_stat < line else ('push' if actual_stat == line else 'lost')
+                
+                # Update prop status
+                await db.connection.execute(
+                    "UPDATE kohls_props SET status = 'final', result = ? WHERE prop_id = ?",
+                    (prop_result, prop_id)
+                )
+                
+                # Get bets on this prop
+                async with db.connection.execute("""
+                    SELECT bet_id, owner_id, amount
+                    FROM kohls_bets
+                    WHERE prop_id = ? AND result IS NULL
+                """, (prop_id,)) as cursor:
+                    pp_bets = await cursor.fetchall()
+                
+                pp_winners = []
+                pp_losers = []
+                
+                for bet_id, owner_id, amount in pp_bets:
+                    if prop_result == 'push':
+                        await self._update_balance(owner_id, amount, season)
+                        await db.connection.execute(
+                            "UPDATE kohls_bets SET result = 'push', payout = ? WHERE bet_id = ?",
+                            (amount, bet_id)
+                        )
+                    elif prop_result == 'won':
+                        payout = amount * 2
+                        await self._update_balance(owner_id, payout, season)
+                        await db.connection.execute(
+                            "UPDATE kohls_bets SET result = 'won', payout = ? WHERE bet_id = ?",
+                            (payout, bet_id)
+                        )
+                        member = registry.find_by_discord_id(owner_id)
+                        name = member.name if member else "Unknown"
+                        pp_winners.append(f"**{name}** +{amount} KC")
+                    else:
+                        await db.connection.execute(
+                            "UPDATE kohls_bets SET result = 'lost', payout = 0 WHERE bet_id = ?",
+                            (bet_id,)
+                        )
+                        member = registry.find_by_discord_id(owner_id)
+                        name = member.name if member else "Unknown"
+                        pp_losers.append(f"**{name}** -{amount} KC")
+                
+                if pp_bets:
+                    player_props_resolved += 1
+                    stat_label = market_key.replace('player_', '').replace('_', ' ').title()
+                    # Include verification data from nflreadpy
+                    result_text = (
+                        f"**{player_name}** ({stat_label})\n"
+                        f"  📊 nflreadpy: `{matched_name}` ({team}) Week {week} = **{actual_stat} yds**\n"
+                        f"  🎯 Line: {outcome.title()} {line} → **{prop_result.upper()}**"
+                    )
+                    if pp_winners:
+                        result_text += f"\n  💰 {', '.join(pp_winners)}"
+                    if pp_losers:
+                        result_text += f"\n  💸 {', '.join(pp_losers)}"
+                    player_prop_results.append(result_text)
+            
+            await db.connection.commit()
+            
+            if resolved_count == 0 and props_resolved == 0 and player_props_resolved == 0:
                 await interaction.followup.send(
                     "No matching games found to auto-resolve.\n"
                     "Make sure game names match NFL team names.",
@@ -1553,11 +1831,25 @@ class KohlsCash(commands.Cog):
                 )
                 return
             
-            result_msg = f"✅ **Auto-resolved {resolved_count} game(s):**\n\n"
-            result_msg += "\n\n".join(all_results)
+            result_msg = ""
+            if resolved_count > 0:
+                result_msg += f"✅ **Auto-resolved {resolved_count} spread bet(s):**\n\n"
+                result_msg += "\n\n".join(all_results)
+            
+            if props_resolved > 0:
+                if result_msg:
+                    result_msg += "\n\n---\n\n"
+                result_msg += f"📊 **Auto-resolved {props_resolved} totals prop(s):**\n\n"
+                result_msg += "\n\n".join(prop_results)
+            
+            if player_props_resolved > 0:
+                if result_msg:
+                    result_msg += "\n\n---\n\n"
+                result_msg += f"🏈 **Auto-resolved {player_props_resolved} player prop(s):**\n\n"
+                result_msg += "\n\n".join(player_prop_results)
             
             await interaction.followup.send(result_msg)
-            logger.info(f"Auto-resolved {resolved_count} games from nflreadpy")
+            logger.info(f"Auto-resolved {resolved_count} spreads, {props_resolved} totals, {player_props_resolved} player props")
             
         except Exception as e:
             logger.error(f"Failed to auto-resolve: {e}")

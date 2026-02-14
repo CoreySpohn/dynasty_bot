@@ -198,6 +198,62 @@ class NFLScheduleClient:
                 })
         
         return results
+    
+    def get_playoff_player_stats(self, season: int) -> pl.DataFrame:
+        """Get player stats for playoff games.
+        
+        Args:
+            season: NFL season year
+            
+        Returns:
+            Polars DataFrame with columns including:
+            - player_name, player_display_name
+            - passing_yards, rushing_yards, receiving_yards
+            - week, season, recent_team
+        """
+        return nfl.load_player_stats(season, summary_level="post")
+    
+    def get_player_stat(
+        self, 
+        player_name: str, 
+        stat_type: str, 
+        season: int
+    ) -> dict | None:
+        """Get a specific stat for a player from playoff games.
+        
+        Args:
+            player_name: Player name to match (fuzzy matching)
+            stat_type: One of 'passing_yards', 'rushing_yards', 'receiving_yards'
+            season: NFL season year
+            
+        Returns:
+            Dict with stat value and verification data, or None if not found.
+            Keys: stat_value, matched_name, week, team
+        """
+        stats_df = self.get_playoff_player_stats(season)
+        
+        # Fuzzy match player name
+        name_lower = player_name.lower().strip()
+        
+        for row in stats_df.iter_rows(named=True):
+            display_name = str(row.get("player_display_name", "")).lower()
+            full_name = str(row.get("player_name", "")).lower()
+            
+            # Check for match
+            if (name_lower in display_name or 
+                display_name in name_lower or
+                name_lower in full_name or
+                full_name in name_lower):
+                stat_value = row.get(stat_type)
+                if stat_value is not None:
+                    return {
+                        "stat_value": int(stat_value),
+                        "matched_name": row.get("player_display_name", "Unknown"),
+                        "week": row.get("week"),
+                        "team": row.get("recent_team", ""),
+                    }
+        
+        return None
 
     def get_all_anchors(self, season: int) -> dict[str, Optional[date]]:
         """Get all NFL schedule anchors for deadline calculations.

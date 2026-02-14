@@ -83,6 +83,21 @@ class IceChugMonitor(commands.Cog):
     
     async def _check_for_violations(self) -> None:
         """Main logic to detect inactive starters with active replacements."""
+        import yaml
+        from pathlib import Path
+        
+        # Check if we're in the offseason - skip monitoring
+        state_path = Path(__file__).parent.parent / "config" / "league_state.yaml"
+        try:
+            with open(state_path) as f:
+                state = yaml.safe_load(f) or {}
+            current_state = state.get("current_state", "in_season")
+            if current_state != "in_season":
+                logger.debug(f"League is in '{current_state}' - skipping ICE CHUG monitoring")
+                return
+        except Exception as e:
+            logger.warning(f"Could not read league state, proceeding with check: {e}")
+        
         # Get current league info for the week
         league = await self.bot.sleeper.get_league(self.league_id)
         current_week = league.get("settings", {}).get("leg", 1)
@@ -114,8 +129,15 @@ class IceChugMonitor(commands.Cog):
         for matchup in matchups:
             roster_id = matchup.get("roster_id")
             starters = matchup.get("starters", [])
+            matchup_id = matchup.get("matchup_id")
             
+            # Skip if no roster_id, no starters, or no matchup (bye week / not playing)
             if not roster_id or not starters:
+                continue
+            
+            # Skip teams not in an active matchup (e.g., playoffs, bye weeks)
+            if matchup_id is None or matchup_id == 0:
+                logger.debug(f"Roster {roster_id} has no matchup this week, skipping")
                 continue
             
             roster = roster_lookup.get(roster_id, {})
