@@ -1,10 +1,11 @@
 """Tests for the League Rumors cog."""
 
-from unittest.mock import MagicMock, patch
+import random
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest_asyncio
 
-from cogs.rumors import LeagueRumors
+from cogs.rumors import STYLE_NOTES, LeagueRumors
 
 
 @pytest_asyncio.fixture
@@ -121,3 +122,126 @@ class TestPostRumor:
         )
 
         assert result is False
+
+    async def test_successful_post_is_remembered_for_callbacks(self, rumors_cog):
+        channel = AsyncMock()
+        rumors_cog.bot.get_channel = MagicMock(return_value=channel)
+        rumors_cog.rumors_channel_id = 123
+
+        result = await rumors_cog._post_rumor(
+            content="Big trade rumor", reporter_name="Test Reporter", emoji="📰"
+        )
+
+        assert result is True
+        assert ("Test Reporter", "Big trade rumor") in rumors_cog._recent_rumors
+
+
+class TestAntiRepeat:
+    """Coverage for avoiding back-to-back repeats of the same reporter/template."""
+
+    async def test_reporter_avoids_immediate_repeat(self, rumors_cog):
+        reporters = rumors_cog.config.get("reporters", [])
+        if len(reporters) < 2:
+            return  # not enough reporters configured to exercise this
+
+        first_name, _, _ = rumors_cog._get_random_reporter()
+        for _ in range(10):
+            next_name, _, _ = rumors_cog._get_random_reporter()
+            assert next_name != first_name
+            first_name = next_name
+
+    async def test_template_avoids_immediate_repeat(self, rumors_cog):
+        rumors_cog.rumor_tables = {"templates": ["Template A", "Template B"]}
+
+        first = await rumors_cog._generate_from_tables([])
+        second = await rumors_cog._generate_from_tables([])
+
+        assert first != second
+
+
+class TestRecentMatchupHighlight:
+    """Coverage for grounding rumors in real matchup results."""
+
+    async def test_returns_none_when_sleeper_calls_fail(self, rumors_cog):
+        # mock_bot.sleeper is a plain MagicMock; awaiting its methods raises,
+        # which should be caught and turned into a None (no highlight) result.
+        result = await rumors_cog._get_recent_matchup_highlight()
+        assert result is None
+
+    async def test_returns_none_before_week_two(self, rumors_cog):
+        rumors_cog.bot.sleeper.get_nfl_state = AsyncMock(return_value={"week": 1})
+
+        result = await rumors_cog._get_recent_matchup_highlight()
+
+        assert result is None
+
+    async def test_describes_a_real_result(self, rumors_cog):
+        rumors_cog.bot.sleeper.get_nfl_state = AsyncMock(return_value={"week": 3})
+        rumors_cog.bot.sleeper.get_matchups = AsyncMock(
+            return_value=[
+                {"matchup_id": 1, "roster_id": 1, "points": 120.5},
+                {"matchup_id": 1, "roster_id": 2, "points": 80.0},
+            ]
+        )
+        rumors_cog.bot.sleeper.get_rosters = AsyncMock(
+            return_value=[
+                {"roster_id": 1, "owner_id": "u1"},
+                {"roster_id": 2, "owner_id": "u2"},
+            ]
+        )
+        rumors_cog.bot.sleeper.get_users = AsyncMock(
+            return_value=[
+                {"user_id": "u1", "display_name": "Alice"},
+                {"user_id": "u2", "display_name": "Bob"},
+            ]
+        )
+
+        result = await rumors_cog._get_recent_matchup_highlight()
+
+        assert "Alice" in result
+        assert "Bob" in result
+        assert "120.5" in result
+
+
+class TestSeedExtras:
+    """Coverage for the callback/style-note nudges mixed into rumor seeds."""
+
+    async def test_callback_note_references_recent_rumor_when_forced(self, rumors_cog, monkeypatch):
+        rumors_cog._recent_rumors.append(("Reporter X", "Some previous rumor text"))
+        monkeypatch.setattr(random, "random", lambda: 0.0)
+
+        note = rumors_cog._maybe_get_callback_note()
+
+        assert "Reporter X" in note
+        assert "Some previous rumor text" in note
+
+    async def test_callback_note_empty_when_no_recent_rumors(self, rumors_cog, monkeypatch):
+        monkeypatch.setattr(random, "random", lambda: 0.0)
+
+        note = rumors_cog._maybe_get_callback_note()
+
+        assert note == ""
+
+    async def test_style_note_forced(self, rumors_cog, monkeypatch):
+        monkeypatch.setattr(random, "random", lambda: 0.0)
+
+        note = rumors_cog._maybe_get_style_note()
+
+        assert note in STYLE_NOTES
+
+    async def test_style_note_suppressed(self, rumors_cog, monkeypatch):
+        monkeypatch.setattr(random, "random", lambda: 0.99)
+
+        note = rumors_cog._maybe_get_style_note()
+
+        assert note == ""
+
+
+class TestBuildRumorSeed:
+    """Coverage for the combined seed builder used by both auto-post and /postrumor."""
+
+    async def test_returns_non_empty_seed_even_when_sleeper_unavailable(self, rumors_cog):
+        seed = await rumors_cog._build_rumor_seed()
+
+        assert seed
+        assert isinstance(seed, str)
