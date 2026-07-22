@@ -78,16 +78,25 @@ class ReporterSelect(discord.ui.Select):
     def __init__(self, reporters: list[dict], rumor_text: str, cog: "LeagueRumors"):
         self.rumor_text = rumor_text
         self.cog = cog
-        
+
+        # Discord hard-caps a select menu at 25 options total. Reserve one
+        # slot for "Random Reporter" below and sample the rest so a growing
+        # reporter roster doesn't crash this dropdown - "Random Reporter"
+        # still draws from the full (weighted) pool regardless of what's
+        # shown here.
+        shown_reporters = (
+            random.sample(reporters, 24) if len(reporters) > 24 else reporters
+        )
+
         options = [
             discord.SelectOption(
                 label=r.get("name", "Unknown"),
                 emoji=r.get("emoji", "📰"),
                 description=r.get("name", "")[:50],
             )
-            for r in reporters
+            for r in shown_reporters
         ]
-        
+
         # Add random option
         options.insert(0, discord.SelectOption(
             label="🎲 Random Reporter",
@@ -632,7 +641,9 @@ class LeagueRumors(commands.Cog):
 
         # Avoid picking the same reporter(s) as the last couple of generations
         candidates = [r for r in reporters if r.get("name") not in self._recent_reporter_names]
-        reporter = random.choice(candidates or reporters)
+        pool = candidates or reporters
+        weights = [r.get("weight", 1) for r in pool]
+        reporter = random.choices(pool, weights=weights, k=1)[0]
         self._recent_reporter_names.append(reporter.get("name", "Reporter"))
         return (
             reporter.get("name", "Reporter"),
@@ -803,6 +814,29 @@ class LeagueRumors(commands.Cog):
         # Add initial delay to avoid immediate post on startup
         await asyncio.sleep(60)  # Wait 1 minute after startup
     
+    async def reporter_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Suggest reporters from the live config as the user types.
+
+        A fixed `@app_commands.choices` list is capped at 25 entries and has
+        to be hand-maintained, so it silently went stale (stopped at "Borat")
+        as new reporters were added to reporters.yaml. Autocomplete reads the
+        config directly, so it's always current and isn't capped by roster
+        size - Discord only limits how many suggestions are shown at once.
+        """
+        choices = [
+            app_commands.Choice(name="🎲 Random", value="random"),
+            app_commands.Choice(name="🎭 Custom (describe below)", value="custom"),
+        ]
+        for r in self.config.get("reporters", []):
+            name = r.get("name", "")
+            choices.append(app_commands.Choice(name=f"{r.get('emoji', '📰')} {name}", value=name))
+
+        current_lower = current.lower()
+        matches = [c for c in choices if current_lower in c.name.lower()]
+        return matches[:25]
+
     @app_commands.command(
         name="rumor",
         description="Submit a rumor and choose who reports it"
@@ -818,22 +852,8 @@ class LeagueRumors(commands.Cog):
             app_commands.Choice(name="🏠 Fantasy League", value="league"),
             app_commands.Choice(name="🏈 NFL News", value="nfl"),
         ],
-        reporter=[
-            app_commands.Choice(name="🎲 Random", value="random"),
-            app_commands.Choice(name="🎭 Custom (describe below)", value="custom"),
-            app_commands.Choice(name="🧈 Butters Stotch", value="Butters Stotch"),
-            app_commands.Choice(name="📱 Adam Schefter", value="Adam Schefter"),
-            app_commands.Choice(name="📢 Stephen A. Smith", value="Stephen A. Smith"),
-            app_commands.Choice(name="📰 Ian Rapoport", value="Ian Rapoport"),
-            app_commands.Choice(name="📺 Ron Burgundy", value="Ron Burgundy"),
-            app_commands.Choice(name="📣 Alex Jones", value="Alex Jones"),
-            app_commands.Choice(name="🍊 Donald Trump", value="Donald Trump"),
-            app_commands.Choice(name="🎤 Joe Rogan", value="Joe Rogan"),
-            app_commands.Choice(name="🎬 Morgan Freeman", value="Morgan Freeman"),
-            app_commands.Choice(name="👨‍🍳 Gordon Ramsay", value="Gordon Ramsay"),
-            app_commands.Choice(name="🇰🇿 Borat", value="Borat"),
-        ]
     )
+    @app_commands.autocomplete(reporter=reporter_autocomplete)
     async def submit_rumor(
         self,
         interaction: discord.Interaction,

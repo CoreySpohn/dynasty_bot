@@ -281,3 +281,80 @@ class TestBuildRumorSeed:
         for _ in range(5):
             seed = await rumors_cog._build_rumor_seed(category="draft")
             assert seed.startswith("draft-only seed about")
+
+
+class TestReporterWeighting:
+    """Coverage for weighted random reporter selection."""
+
+    async def test_weighted_reporter_favors_higher_weight(self, rumors_cog):
+        rumors_cog.config = {
+            "reporters": [
+                {"name": "Common", "style": "s", "emoji": "x", "weight": 1},
+                {"name": "Favored", "style": "s", "emoji": "x", "weight": 20},
+            ]
+        }
+        counts = {"Common": 0, "Favored": 0}
+        for _ in range(200):
+            rumors_cog._recent_reporter_names.clear()  # isolate weighting from anti-repeat
+            name, _, _ = rumors_cog._get_random_reporter()
+            counts[name] += 1
+
+        assert counts["Favored"] > counts["Common"]
+
+    async def test_missing_weight_defaults_to_even_odds(self, rumors_cog):
+        rumors_cog.config = {
+            "reporters": [
+                {"name": "NoWeightField", "style": "s", "emoji": "x"},
+            ]
+        }
+
+        name, _, _ = rumors_cog._get_random_reporter()
+
+        assert name == "NoWeightField"
+
+
+class TestReporterSelectOptionCap:
+    """Coverage for staying under Discord's 25-option select-menu limit."""
+
+    async def test_caps_options_at_25_with_a_large_roster(self):
+        from cogs.rumors import ReporterSelect
+
+        reporters = [{"name": f"Reporter {i}", "style": "s", "emoji": "📰"} for i in range(40)]
+        select = ReporterSelect(reporters, "some rumor", cog=MagicMock())
+
+        assert len(select.options) <= 25
+
+    async def test_includes_all_reporters_when_pool_is_small(self):
+        from cogs.rumors import ReporterSelect
+
+        reporters = [
+            {"name": "A", "style": "s", "emoji": "📰"},
+            {"name": "B", "style": "s", "emoji": "📰"},
+        ]
+        select = ReporterSelect(reporters, "some rumor", cog=MagicMock())
+
+        assert len(select.options) == 3  # A, B, and the Random option
+
+
+class TestReporterAutocomplete:
+    """Coverage for /rumor's reporter autocomplete (replaces a hardcoded, stale choice list)."""
+
+    async def test_includes_reporters_from_live_config(self, rumors_cog):
+        choices = await rumors_cog.reporter_autocomplete(MagicMock(), "")
+
+        values = {c.value for c in choices}
+        assert "random" in values
+        assert "custom" in values
+        configured_names = {r["name"] for r in rumors_cog.config.get("reporters", [])}
+        assert configured_names & values
+
+    async def test_filters_by_current_input(self, rumors_cog):
+        choices = await rumors_cog.reporter_autocomplete(MagicMock(), "judy")
+
+        assert any("Judge Judy" in c.name for c in choices)
+        assert all("judy" in c.name.lower() for c in choices)
+
+    async def test_caps_results_at_25(self, rumors_cog):
+        choices = await rumors_cog.reporter_autocomplete(MagicMock(), "")
+
+        assert len(choices) <= 25
