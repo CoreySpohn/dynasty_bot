@@ -170,6 +170,86 @@ class TestGetRandomReporter:
         assert name == "Unknown Reporter"
 
 
+class TestResolveReporter:
+    """Coverage for the reporter picker shared by /rumor and /randomrumor."""
+
+    async def test_random_returns_a_configured_reporter(self, rumors_cog):
+        resolved = await rumors_cog._resolve_reporter("random")
+
+        reporter_names = {r["name"] for r in rumors_cog.config.get("reporters", [])}
+        assert resolved[0] in reporter_names
+
+    async def test_named_reporter_is_resolved_from_config(self, rumors_cog):
+        rumors_cog.config = {
+            "reporters": [{"name": "Test Reporter", "style": "sarcastic", "emoji": "🔥"}]
+        }
+
+        resolved = await rumors_cog._resolve_reporter("Test Reporter")
+
+        assert resolved == ("Test Reporter", "sarcastic", "🔥")
+
+    async def test_unknown_name_falls_back_to_random(self, rumors_cog):
+        resolved = await rumors_cog._resolve_reporter("Not A Real Reporter")
+
+        reporter_names = {r["name"] for r in rumors_cog.config.get("reporters", [])}
+        assert resolved[0] in reporter_names
+
+    async def test_custom_without_personality_returns_none(self, rumors_cog):
+        resolved = await rumors_cog._resolve_reporter("custom", None)
+
+        assert resolved is None
+
+    async def test_custom_with_personality_uses_ai_client(self, rumors_cog):
+        # parse_custom_reporter returns (name, emoji, style) - _resolve_reporter
+        # must reorder that to the (name, style, emoji) convention used everywhere else.
+        stub_client = MagicMock()
+        stub_client.parse_custom_reporter = AsyncMock(
+            return_value=("Pirate Pete", "🏴‍☠️", "talks like a pirate")
+        )
+        rumors_cog._get_ai_client = MagicMock(return_value=stub_client)
+
+        resolved = await rumors_cog._resolve_reporter("custom", "a drunk pirate")
+
+        assert resolved == ("Pirate Pete", "talks like a pirate", "🏴‍☠️")
+
+
+class TestForceRandomRumorReporterOption:
+    """Regression coverage: /randomrumor must offer the same reporter
+    picker as /rumor instead of always rolling a random one."""
+
+    async def test_uses_the_requested_reporter(self, rumors_cog):
+        rumors_cog.config = {
+            "reporters": [{"name": "Test Reporter", "style": "sarcastic", "emoji": "🔥"}]
+        }
+        rumors_cog.rumor_tables = {"templates": {"general": ["a mysterious trade"]}}
+        stub_client = MagicMock()
+        stub_client.generate_random_rumor = AsyncMock(return_value="Generated rumor text")
+        rumors_cog._get_ai_client = MagicMock(return_value=stub_client)
+        rumors_cog._post_rumor = AsyncMock(return_value=True)
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        await rumors_cog.force_random_rumor.callback(
+            rumors_cog, interaction, reporter="Test Reporter"
+        )
+
+        rumors_cog._post_rumor.assert_awaited_once()
+        assert rumors_cog._post_rumor.call_args.kwargs["reporter_name"] == "Test Reporter"
+
+    async def test_custom_without_personality_prompts_instead_of_posting(self, rumors_cog):
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+        rumors_cog._post_rumor = AsyncMock()
+
+        await rumors_cog.force_random_rumor.callback(rumors_cog, interaction, reporter="custom")
+
+        rumors_cog._post_rumor.assert_not_called()
+        interaction.followup.send.assert_awaited_once()
+        assert "Custom reporter" in interaction.followup.send.call_args[0][0]
+
+
 class TestPostRumor:
     """Test suite for posting rumors to Discord."""
 
@@ -374,6 +454,54 @@ class TestExtractSubjectFromText:
 
         assert subject["owner"] is None
         assert subject["player_name"] is None
+
+    async def test_ambiguous_surname_alone_is_not_matched(self, rumors_cog, ktc_db):
+        # Two different real players share the surname "Allen" - a bare
+        # "Allen" mention shouldn't guess which one the rumor is about.
+        await _insert_ktc_row(ktc_db, 1, "p1", "Josh Allen", "QB", 9000, "2026-07-22")
+        await _insert_ktc_row(ktc_db, 2, "p2", "Keenan Allen", "WR", 500, "2026-07-22")
+
+        subject = await rumors_cog._extract_subject_from_text(
+            "Allen had a huge game this week"
+        )
+
+        assert subject["player_name"] is None
+
+    async def test_full_name_wins_even_with_ambiguous_surname(self, rumors_cog, ktc_db):
+        await _insert_ktc_row(ktc_db, 1, "p1", "Josh Allen", "QB", 9000, "2026-07-22")
+        await _insert_ktc_row(ktc_db, 2, "p2", "Keenan Allen", "WR", 500, "2026-07-22")
+
+        subject = await rumors_cog._extract_subject_from_text(
+            "Josh Allen had a huge game this week"
+        )
+
+        assert subject["player_name"] == "Josh Allen"
+
+    async def test_ambiguous_owner_first_name_alone_is_not_matched(self, rumors_cog):
+        # Two owners share the first name "Rob" (Rob Jr. / Rob Sr.) - bare
+        # "Rob" shouldn't guess which one.
+        rumors_cog._get_owner_data_for_rumors = AsyncMock(
+            return_value=[
+                {"name": "Rob Jr.", "players": [], "team_name": ""},
+                {"name": "Rob Sr.", "players": [], "team_name": ""},
+            ]
+        )
+
+        subject = await rumors_cog._extract_subject_from_text("Rob is on a heater")
+
+        assert subject["owner"] is None
+
+    async def test_full_owner_name_wins_even_with_ambiguous_first_name(self, rumors_cog):
+        rumors_cog._get_owner_data_for_rumors = AsyncMock(
+            return_value=[
+                {"name": "Rob Jr.", "players": [], "team_name": ""},
+                {"name": "Rob Sr.", "players": [], "team_name": ""},
+            ]
+        )
+
+        subject = await rumors_cog._extract_subject_from_text("Rob Jr is on a heater")
+
+        assert subject["owner"]["name"] == "Rob Jr."
 
 
 class TestBuildContextBlock:

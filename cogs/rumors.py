@@ -69,6 +69,17 @@ CONTEXT_MODULES = [
 ]
 
 
+def _normalize_for_matching(text: str) -> str:
+    """Lowercase + strip punctuation for freeform-text entity matching.
+
+    Deliberately does NOT strip generational suffixes the way
+    trade_values.normalize_name does for cross-source player matching -
+    "Rob Jr." and "Rob Sr." (both real owners in this league) need to
+    stay distinguishable here, not collapse to the same "rob".
+    """
+    return re.sub(r"[^a-z0-9 ]", "", text.lower())
+
+
 def load_reporters_config() -> dict:
     """Load reporter personalities from YAML config."""
     try:
@@ -515,19 +526,36 @@ class LeagueRumors(commands.Cog):
         which keeps the "don't cram in everything" guarantee intact even
         as we get better at figuring out who a rumor is about.
 
-        Matching is deliberately simple (word-boundary substring, first
-        name for owners / last name for players) - good enough for a fun
-        Discord bot, not NLP-grade entity recognition.
+        Matching is deliberately simple substring matching, not NLP-grade
+        entity recognition - but it's careful about ambiguity: a full name
+        match always wins outright, and a bare last name (e.g. "Allen") is
+        only trusted when it belongs to exactly one KTC-tracked player.
+        Plenty of NFL players share a surname (Josh Allen / Keenan Allen,
+        every Jr./Sr. pair), so guessing on a common surname alone would
+        just as often chain onto the WRONG player as the right one.
         """
         if not text:
             return {}
-        text_lower = text.lower()
+        normalized_text = _normalize_for_matching(text)
+        text_words = set(normalized_text.split())
 
         owner = None
-        for candidate in await self._get_owner_data_for_rumors():
-            first_name = candidate["name"].split()[0]
-            if len(first_name) >= 3 and re.search(
-                rf"\b{re.escape(first_name.lower())}\b", text_lower
+        owner_data = await self._get_owner_data_for_rumors()
+        first_name_counts: dict[str, int] = {}
+        for o in owner_data:
+            first_name_counts[o["name"].split()[0].lower()] = (
+                first_name_counts.get(o["name"].split()[0].lower(), 0) + 1
+            )
+        for candidate in owner_data:
+            full_key = _normalize_for_matching(candidate["name"])
+            first_name = candidate["name"].split()[0].lower()
+            if len(full_key) >= 3 and full_key in normalized_text:
+                owner = candidate
+                break
+            if (
+                len(first_name) >= 3
+                and first_name_counts.get(first_name, 0) == 1
+                and first_name in text_words
             ):
                 owner = candidate
                 break
@@ -538,15 +566,29 @@ class LeagueRumors(commands.Cog):
         except Exception as e:
             logger.error(f"Failed to fetch KTC snapshot for subject extraction: {e}")
             rows = []
-        # Longest names first so a full "Fernando Mendoza" match wins over
-        # any shorter last-name collision elsewhere in the pool.
-        for row in sorted(rows, key=lambda r: len(r["player_name"]), reverse=True):
-            last_name = row["player_name"].split()[-1]
-            if len(last_name) >= 4 and re.search(
-                rf"\b{re.escape(last_name.lower())}\b", text_lower
-            ):
-                player_name = row["player_name"]
-                break
+
+        if rows:
+            last_name_counts: dict[str, int] = {}
+            for row in rows:
+                last = row["player_name"].split()[-1].lower()
+                last_name_counts[last] = last_name_counts.get(last, 0) + 1
+
+            # Pass 1: a full name match is unambiguous no matter how common
+            # the surname is elsewhere in the pool - check these first.
+            for row in sorted(rows, key=lambda r: len(r["player_name"]), reverse=True):
+                full_key = _normalize_for_matching(row["player_name"])
+                if len(full_key) >= 5 and full_key in normalized_text:
+                    player_name = row["player_name"]
+                    break
+
+            # Pass 2: fall back to a bare last name, but only when exactly
+            # one tracked player has it - otherwise we'd be guessing.
+            if not player_name:
+                for row in rows:
+                    last = row["player_name"].split()[-1].lower()
+                    if len(last) >= 4 and last_name_counts.get(last, 0) == 1 and last in text_words:
+                        player_name = row["player_name"]
+                        break
 
         return {"owner": owner, "player_name": player_name}
 
@@ -880,6 +922,45 @@ class LeagueRumors(commands.Cog):
             reporter.get("emoji", "📰"),
         )
     
+    async def _resolve_reporter(
+        self, reporter: str, custom_personality: Optional[str] = None
+    ) -> Optional[tuple[str, str, str]]:
+        """Resolve a reporter selection (from the shared reporter_autocomplete
+        list: "random", "custom", or a config reporter name) into
+        (name, style, emoji).
+
+        Shared by /rumor and /randomrumor so both commands offer the exact
+        same reporter picker instead of /randomrumor being stuck with
+        whatever _get_random_reporter() rolls.
+
+        Returns:
+            (name, style, emoji), or None only for reporter == "custom"
+            with no custom_personality given - the caller should prompt
+            for one rather than silently falling back to random.
+        """
+        if reporter == "custom":
+            if not custom_personality:
+                return None
+            name, emoji, style = await self._get_ai_client().parse_custom_reporter(
+                custom_personality
+            )
+            return (name, style, emoji)
+
+        if reporter == "random":
+            return self._get_random_reporter()
+
+        reporter_data = next(
+            (r for r in self.config.get("reporters", []) if r.get("name") == reporter),
+            None,
+        )
+        if reporter_data:
+            return (
+                reporter_data.get("name", "Reporter"),
+                reporter_data.get("style", "Be professional."),
+                reporter_data.get("emoji", "📰"),
+            )
+        return self._get_random_reporter()
+
     def _get_reporter_list_text(self) -> str:
         """Get formatted list of available reporters."""
         reporters = self.config.get("reporters", [])
@@ -1101,35 +1182,16 @@ class LeagueRumors(commands.Cog):
             )
             return
         
-        # Handle custom personality
-        if reporter == "custom":
-            if not custom_personality:
-                await interaction.followup.send(
-                    "🎭 You selected Custom reporter but didn't describe the personality!\n"
-                    "Fill in the `custom_personality` field (e.g. 'a drunk pirate' or 'Yoda from Star Wars')",
-                    ephemeral=True,
-                )
-                return
-            
-            # Use AI to parse the custom personality
-            reporter_name, emoji, reporter_style = await self._get_ai_client().parse_custom_reporter(
-                custom_personality
+        resolved = await self._resolve_reporter(reporter, custom_personality)
+        if resolved is None:
+            await interaction.followup.send(
+                "🎭 You selected Custom reporter but didn't describe the personality!\n"
+                "Fill in the `custom_personality` field (e.g. 'a drunk pirate' or 'Yoda from Star Wars')",
+                ephemeral=True,
             )
-        elif reporter == "random":
-            reporter_name, reporter_style, emoji = self._get_random_reporter()
-        else:
-            reporter_data = next(
-                (r for r in self.config.get("reporters", []) 
-                 if r.get("name") == reporter),
-                None
-            )
-            if reporter_data:
-                reporter_name = reporter_data.get("name", "Reporter")
-                reporter_style = reporter_data.get("style", "Be professional.")
-                emoji = reporter_data.get("emoji", "📰")
-            else:
-                reporter_name, reporter_style, emoji = self._get_random_reporter()
-        
+            return
+        reporter_name, reporter_style, emoji = resolved
+
         # Only include league context for fantasy league rumors
         if context == "league":
             team_names = await self._get_team_names()
@@ -1187,6 +1249,8 @@ class LeagueRumors(commands.Cog):
     @app_commands.describe(
         category="Scope the rumor to a specific flavor instead of the full random mix",
         context="Give specific direction for what the rumor should be about (overrides category)",
+        reporter="Which reporter should break this news? Defaults to random.",
+        custom_personality="Describe your own custom reporter (e.g. 'a drunk pirate' or 'Yoda from Star Wars')",
     )
     @app_commands.choices(
         category=[
@@ -1196,15 +1260,28 @@ class LeagueRumors(commands.Cog):
             app_commands.Choice(name="📰 General", value="general"),
         ]
     )
+    @app_commands.autocomplete(reporter=reporter_autocomplete)
     @app_commands.default_permissions(administrator=True)
     async def force_random_rumor(
         self,
         interaction: discord.Interaction,
         category: Optional[app_commands.Choice[str]] = None,
         context: Optional[str] = None,
+        reporter: str = "random",
+        custom_personality: Optional[str] = None,
     ) -> None:
         """Admin command to force a random rumor post using table-based generation."""
         await interaction.response.defer(ephemeral=True)
+
+        resolved = await self._resolve_reporter(reporter, custom_personality)
+        if resolved is None:
+            await interaction.followup.send(
+                "🎭 You selected Custom reporter but didn't describe the personality!\n"
+                "Fill in the `custom_personality` field (e.g. 'a drunk pirate' or 'Yoda from Star Wars')",
+                ephemeral=True,
+            )
+            return
+        reporter_name, reporter_style, emoji = resolved
 
         # Same seed mix (real events, table-generated scenarios, canned
         # topics) the auto-post loop uses - optionally scoped to a category
@@ -1214,10 +1291,8 @@ class LeagueRumors(commands.Cog):
             context=context,
         )
 
-        # Pick a random reporter
-        reporter_name, reporter_style, emoji = self._get_random_reporter()
         member_context = await self._build_context_block(subject)
-        
+
         try:
             # Have AI expand on the generated seed
             rumor = await self._get_ai_client().generate_random_rumor(
