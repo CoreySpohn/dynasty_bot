@@ -121,11 +121,18 @@ into the `/rankings` Power Level formula (15% weight). Still open:
 `/tradecalc` only accepts players by name, not draft picks; and a second
 source (FantasyCalc) for cross-checking values.
 
-### Rumor Flavor from Team Value Trends
-Pass team dynasty value / trend data into the rumor generator (`cogs/rumors.py`)
-as context so reporters can reference it (e.g. "Team X's dynasty stock is
-cratering"). Deliberately deferred from the KTC tracking work above since it
-needs its own prompt/persona design pass.
+### Rumor Flavor from Team Value Trends - DONE
+`cogs/rumors.py` now rolls a single weighted "context module" per rumor
+(`CONTEXT_MODULES`) - full roster, one owner's roster, a player's KTC
+value, a team's total dynasty value, a 7-day value trend, or nothing at
+all - instead of always injecting the full roster dump every time. Several
+modules chain onto the specific owner/player the rumor's topic is actually
+about (`_build_rumor_seed`'s `subject`, or `_extract_subject_from_text` for
+real user-submitted rumors like "Corey wants to draft Mendoza"), so the
+extra color reads as attached to the rumor rather than random noise. Open
+follow-up: entity extraction is regex/substring based (first name for
+owners, last name for players), not real NLP - good enough for flavor, not
+bulletproof against short/common names.
 
 ### Draft Recap
 Auto-generate draft grades and hot takes after rookie drafts.

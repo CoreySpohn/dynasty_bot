@@ -71,7 +71,7 @@ def index_by_sleeper_id(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
     return {r["sleeper_id"]: r for r in rows if r.get("sleeper_id")}
 
 
-async def _value_as_of(ktc_id: int, cutoff_date: str) -> Optional[int]:
+async def get_value_as_of(ktc_id: int, cutoff_date: str) -> Optional[int]:
     """Most recent recorded superflex value for a player at or before a date."""
     async with db.execute(
         """
@@ -83,6 +83,25 @@ async def _value_as_of(ktc_id: int, cutoff_date: str) -> Optional[int]:
     ) as cursor:
         row = await cursor.fetchone()
     return row[0] if row and row[0] is not None else None
+
+
+async def get_value_trend(
+    ktc_id: int,
+    current_value: Optional[int],
+    current_date: str,
+    lookback_days: int = TREND_LOOKBACK_DAYS,
+) -> Optional[int]:
+    """Change in superflex value over the trailing lookback window, if we
+    have a snapshot from around then."""
+    if current_value is None:
+        return None
+    cutoff = (
+        datetime.fromisoformat(current_date) - timedelta(days=lookback_days)
+    ).date().isoformat()
+    prior_value = await get_value_as_of(ktc_id, cutoff)
+    if prior_value is None:
+        return None
+    return current_value - prior_value
 
 
 async def get_team_dynasty_values(rosters: list[dict[str, Any]]) -> dict[int, int]:
@@ -132,7 +151,7 @@ async def get_team_dynasty_value_trends(
                 continue
             current_value = row["value_sf"] or 0
             current_total += current_value
-            prior_value = await _value_as_of(row["ktc_id"], cutoff)
+            prior_value = await get_value_as_of(row["ktc_id"], cutoff)
             prior_total += prior_value if prior_value is not None else current_value
         trends[roster["roster_id"]] = (current_total, prior_total)
     return trends
@@ -335,13 +354,7 @@ class TradeValues(commands.Cog):
     ) -> Optional[int]:
         """Return the change in superflex value over the last week, if we
         have a snapshot from around then."""
-        cutoff = (
-            datetime.fromisoformat(current_date) - timedelta(days=TREND_LOOKBACK_DAYS)
-        ).date().isoformat()
-        prior_value = await _value_as_of(ktc_id, cutoff)
-        if prior_value is None or current_value is None:
-            return None
-        return current_value - prior_value
+        return await get_value_trend(ktc_id, current_value, current_date)
 
     # =========================================================================
     # Team Value Commands

@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import random
+import re
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,12 @@ import yaml
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from cogs.trade_values import (
+    get_latest_snapshot,
+    get_team_dynasty_values,
+    get_value_trend,
+    normalize_name,
+)
 from config import SLEEPER_LEAGUE_ID
 from lib.ai_client import GeminiClient
 from lib.claude_client import ClaudeClient
@@ -41,6 +48,24 @@ STYLE_NOTES = [
     "Lowercase is fine, no dramatic buildup, one sentence.",
     "Deliver this as a short, offhand comment someone would drop "
     "mid-conversation, not a formal report.",
+]
+
+# What extra context (if any) rides along with a rumor's topic, as a single
+# weighted roll - like a D&D random table - rather than a pile of
+# independent booleans that all tend to fire together. Every rumor used to
+# get the SAME full-roster dump every time, which is exactly why they read
+# as formulaic ("mentions these three things, must be random"). Now exactly
+# one of these fires per generation, and several of them chain onto the
+# specific owner/player the topic's table roll already picked (see
+# _build_context_block), so the extra color feels attached to the rumor
+# instead of injected wholesale.
+CONTEXT_MODULES = [
+    ("full_roster", 0.15),   # the old always-on behavior, now just occasional
+    ("single_roster", 0.20), # one owner's roster - chains to the topic's owner if there is one
+    ("player_value", 0.20),  # a player's KTC dynasty value/rank - chains to the topic's player
+    ("team_value", 0.15),    # an owner's total dynasty roster value/rank
+    ("value_trend", 0.15),   # 7-day KTC value swing for a player or owner
+    ("none", 0.15),          # deliberately no extra context at all
 ]
 
 
@@ -136,8 +161,9 @@ class ReporterSelect(discord.ui.Select):
         
         # Get team names
         team_names = await self.cog._get_team_names()
-        member_context = await self.cog._get_roster_context()
-        
+        subject = await self.cog._extract_subject_from_text(self.rumor_text)
+        member_context = await self.cog._build_context_block(subject)
+
         # Rewrite the rumor
         try:
             rewritten = await self.cog._get_ai_client().rewrite_as_reporter(
@@ -251,7 +277,7 @@ class LeagueRumors(commands.Cog):
     
     async def _generate_from_tables(
         self, owner_data: list[dict], category: Optional[str] = None
-    ) -> str:
+    ) -> tuple[str, dict]:
         """Generate a rumor base by randomly filling a template with table values.
 
         Args:
@@ -261,11 +287,15 @@ class LeagueRumors(commands.Cog):
                 the category is unknown or omitted.
 
         Returns:
-            A filled-in rumor template string for AI to expand upon.
+            Tuple of (filled-in rumor template string, subject). subject is
+            {"owner": <owner_data dict or None>, "player_name": <str or None>}
+            for whichever owner1/player1 the template happened to roll, if
+            any - so a later, independent context roll can chain onto the
+            SAME entity the topic is actually about instead of a random one.
         """
         templates_by_category = self.rumor_tables.get("templates") if self.rumor_tables else None
         if not templates_by_category:
-            return "a mysterious trade brewing in the league"
+            return "a mysterious trade brewing in the league", {}
 
         if category and category in templates_by_category:
             pool = templates_by_category[category]
@@ -273,7 +303,7 @@ class LeagueRumors(commands.Cog):
             pool = [t for templates in templates_by_category.values() for t in templates]
 
         if not pool:
-            return "a mysterious trade brewing in the league"
+            return "a mysterious trade brewing in the league", {}
 
         # Pick a random template, avoiding ones used in the last few generations
         candidates = [t for t in pool if t not in self._recent_templates]
@@ -281,7 +311,6 @@ class LeagueRumors(commands.Cog):
         self._recent_templates.append(template)
 
         # Find all placeholders in the template
-        import re
         placeholders = re.findall(r"\{(\w+)\}", template)
         
         # Build replacement dict and track selected owners
@@ -329,12 +358,13 @@ class LeagueRumors(commands.Cog):
                 replacements[placeholder] = f"[{placeholder}]"
         
         # Fill in the template
+        subject = {"owner": owner1_data, "player_name": replacements.get("player1")}
         try:
-            return template.format(**replacements)
+            return template.format(**replacements), subject
         except Exception as e:
             logger.error(f"Error filling rumor template: {e}")
-            return template
-    
+            return template, subject
+
     async def _get_owner_data_for_rumors(self) -> list[dict]:
         """Build owner data with roster player names for rumor generation."""
         registry = get_member_registry()
@@ -470,9 +500,59 @@ class LeagueRumors(commands.Cog):
             "Only reference or follow up on it if it fits naturally - otherwise ignore it."
         )
 
+    async def _extract_subject_from_text(self, text: str) -> dict:
+        """Best-effort parse of real freeform text (a user's submitted
+        rumor, or an admin's freeform /randomrumor direction) for named
+        entities - e.g. "Corey wants to draft Mendoza" resolves to Corey's
+        owner data and Fernando Mendoza's KTC row.
+
+        This mirrors the subject the table generator produces for
+        auto-generated seeds (see _generate_from_tables), so the SAME
+        weighted context roll in _build_context_block can chain onto
+        whatever the human actually wrote about instead of always
+        defaulting to a full roster dump. It only makes these entities
+        ELIGIBLE for that roll - it doesn't force anything to be included,
+        which keeps the "don't cram in everything" guarantee intact even
+        as we get better at figuring out who a rumor is about.
+
+        Matching is deliberately simple (word-boundary substring, first
+        name for owners / last name for players) - good enough for a fun
+        Discord bot, not NLP-grade entity recognition.
+        """
+        if not text:
+            return {}
+        text_lower = text.lower()
+
+        owner = None
+        for candidate in await self._get_owner_data_for_rumors():
+            first_name = candidate["name"].split()[0]
+            if len(first_name) >= 3 and re.search(
+                rf"\b{re.escape(first_name.lower())}\b", text_lower
+            ):
+                owner = candidate
+                break
+
+        player_name = None
+        try:
+            rows = await get_latest_snapshot()
+        except Exception as e:
+            logger.error(f"Failed to fetch KTC snapshot for subject extraction: {e}")
+            rows = []
+        # Longest names first so a full "Fernando Mendoza" match wins over
+        # any shorter last-name collision elsewhere in the pool.
+        for row in sorted(rows, key=lambda r: len(r["player_name"]), reverse=True):
+            last_name = row["player_name"].split()[-1]
+            if len(last_name) >= 4 and re.search(
+                rf"\b{re.escape(last_name.lower())}\b", text_lower
+            ):
+                player_name = row["player_name"]
+                break
+
+        return {"owner": owner, "player_name": player_name}
+
     async def _build_rumor_seed(
         self, category: Optional[str] = None, context: Optional[str] = None
-    ) -> str:
+    ) -> tuple[str, dict]:
         """Build a topic/seed for AI rumor generation.
 
         Mixes real events, table-generated scenarios grounded in actual
@@ -488,40 +568,189 @@ class LeagueRumors(commands.Cog):
             context: Optional freeform direction from the caller (e.g. "about
                 Corey and David fighting over a QB"). When given, this is
                 used directly as the seed instead of a random pick.
+
+        Returns:
+            Tuple of (seed_text, subject). subject is {"owner": ..., "player_name": ...}
+            when the seed came from the table generator or was parsed out of
+            explicit freeform context (so a later, independent context-block
+            roll can chain onto the same owner/player), or {} when neither
+            produced an identifiable subject (real event, canned topic).
         """
         if context:
-            seed = context
+            seed, subject = context, await self._extract_subject_from_text(context)
         else:
-            candidates: list[tuple[str, int]] = []
+            candidates: list[tuple[str, int, dict]] = []
 
             if not category:
                 real_event = await self._get_recent_matchup_highlight()
                 if real_event:
-                    candidates.append((real_event, 2))
+                    candidates.append((real_event, 2, {}))
 
             owner_data = await self._get_owner_data_for_rumors()
-            table_seed = await self._generate_from_tables(owner_data, category=category)
+            table_seed, table_subject = await self._generate_from_tables(
+                owner_data, category=category
+            )
             if table_seed:
-                candidates.append((table_seed, 3))
+                candidates.append((table_seed, 3, table_subject))
 
             if not category:
                 topics = self.config.get("random_topics", [])
                 if topics:
-                    candidates.append((random.choice(topics), 2))
+                    candidates.append((random.choice(topics), 2, {}))
 
-            seed = (
-                random.choices(
-                    [c[0] for c in candidates], weights=[c[1] for c in candidates], k=1
+            if candidates:
+                idx = random.choices(
+                    range(len(candidates)), weights=[c[1] for c in candidates], k=1
                 )[0]
-                if candidates
-                else "league drama"
-            )
+                seed, _, subject = candidates[idx]
+            else:
+                seed, subject = "league drama", {}
 
         for extra in (self._maybe_get_callback_note(), self._maybe_get_style_note()):
             if extra:
                 seed = f"{seed}\n\n{extra}"
 
-        return seed
+        return seed, subject
+
+    async def _build_context_block(self, subject: dict) -> Optional[str]:
+        """Roll once on CONTEXT_MODULES to decide what extra context (if
+        any) accompanies this rumor's topic - never the same shape twice
+        in a row, unlike the old "always dump the full roster" behavior.
+
+        Several modules chain onto `subject` (the owner/player the topic's
+        own table roll already picked, if any) so the extra color reads as
+        specific to this rumor instead of a random unrelated fact.
+        """
+        modules, weights = zip(*CONTEXT_MODULES)
+        module = random.choices(modules, weights=weights, k=1)[0]
+
+        builders = {
+            "full_roster": self._get_roster_context,
+            "single_roster": lambda: self._ctx_single_roster(subject),
+            "player_value": lambda: self._ctx_player_value(subject),
+            "team_value": lambda: self._ctx_team_value(subject),
+            "value_trend": lambda: self._ctx_value_trend(subject),
+        }
+        builder = builders.get(module)
+        if builder is None:  # "none" rolled - deliberately no extra context
+            return None
+
+        try:
+            text = await builder()
+        except Exception as e:
+            logger.error(f"Context module '{module}' failed: {e}")
+            return None
+
+        if not text:
+            return None
+        if module != "full_roster":
+            text += " (Optional color - only weave it in if it fits naturally.)"
+        return text
+
+    async def _ctx_single_roster(self, subject: dict) -> Optional[str]:
+        """One owner's roster - the topic's owner if the seed named one."""
+        owner = subject.get("owner")
+        if not owner or not owner.get("players"):
+            owner_data = await self._get_owner_data_for_rumors()
+            with_players = [o for o in owner_data if o.get("players")]
+            owner = random.choice(with_players) if with_players else None
+        if not owner:
+            return None
+        players = ", ".join(owner["players"][:5])
+        return f"{owner['name']}'s current roster includes: {players}"
+
+    async def _ctx_player_value(self, subject: dict) -> Optional[str]:
+        """A player's KTC dynasty value - the topic's player if it named one."""
+        rows = await get_latest_snapshot()
+        if not rows:
+            return None
+
+        row = None
+        player_name = subject.get("player_name")
+        if player_name:
+            key = normalize_name(player_name)
+            row = next((r for r in rows if normalize_name(r["player_name"]) == key), None)
+        if not row:
+            candidates = [r for r in rows if r.get("value_sf")]
+            row = random.choice(candidates) if candidates else None
+        if not row or not row.get("value_sf"):
+            return None
+
+        return (
+            f"KeepTradeCut dynasty value for {row['player_name']} ({row['position']}): "
+            f"{row['value_sf']:,} pts (Superflex), ranked #{row['rank_sf']} overall, "
+            f"#{row['positional_rank_sf']} at {row['position']}."
+        )
+
+    async def _ctx_team_value(self, subject: dict) -> Optional[str]:
+        """An owner's total dynasty roster value and league rank."""
+        try:
+            rosters = await self.bot.sleeper.get_rosters(self.league_id)
+            users = await self.bot.sleeper.get_users(self.league_id)
+        except Exception as e:
+            logger.error(f"Failed to fetch rosters for team value context: {e}")
+            return None
+        if not rosters:
+            return None
+
+        values = await get_team_dynasty_values(rosters)
+        if not any(values.values()):
+            return None
+
+        registry = get_member_registry()
+        user_lookup = {u.get("user_id"): u for u in users}
+
+        def owner_name(roster: dict) -> str:
+            member = registry.find_by_sleeper_id(roster.get("owner_id"))
+            if member:
+                return member.name
+            return user_lookup.get(roster.get("owner_id"), {}).get("display_name", "Unknown")
+
+        subject_owner_name = (subject.get("owner") or {}).get("name")
+        roster = None
+        if subject_owner_name:
+            roster = next((r for r in rosters if owner_name(r) == subject_owner_name), None)
+        if not roster:
+            roster = random.choice(rosters)
+
+        value = values.get(roster["roster_id"], 0)
+        if not value:
+            return None
+        ranked = sorted(rosters, key=lambda r: values.get(r["roster_id"], 0), reverse=True)
+        rank = next(i for i, r in enumerate(ranked, 1) if r["roster_id"] == roster["roster_id"])
+
+        return (
+            f"{owner_name(roster)}'s total dynasty roster value (KeepTradeCut, Superflex): "
+            f"{value:,} pts - ranked #{rank} of {len(rosters)} in the league."
+        )
+
+    async def _ctx_value_trend(self, subject: dict) -> Optional[str]:
+        """7-day KTC value swing for a player - the topic's player if named."""
+        rows = await get_latest_snapshot()
+        if not rows:
+            return None
+        latest_date = rows[0]["recorded_date"]
+
+        row = None
+        player_name = subject.get("player_name")
+        if player_name:
+            key = normalize_name(player_name)
+            row = next((r for r in rows if normalize_name(r["player_name"]) == key), None)
+        if not row:
+            candidates = [r for r in rows if r.get("value_sf")]
+            row = random.choice(candidates) if candidates else None
+        if not row:
+            return None
+
+        delta = await get_value_trend(row["ktc_id"], row["value_sf"], latest_date)
+        if not delta:  # None (no history yet) or 0 (flat - not interesting)
+            return None
+
+        direction = "risen" if delta > 0 else "fallen"
+        return (
+            f"{row['player_name']}'s KeepTradeCut dynasty value has {direction} "
+            f"{abs(delta):,} pts over the last week."
+        )
 
     def _get_ai_client(self):
         """Pick a random AI backend for this generation.
@@ -777,14 +1006,14 @@ class LeagueRumors(commands.Cog):
         
         reporter_name, reporter_style, emoji = self._get_random_reporter()
         team_names = await self._get_team_names()
-        member_context = await self._get_roster_context()
 
         if not team_names:
             return
 
         # Mix real events, table-generated scenarios, and canned topics for
         # a specific, varied seed - rather than always a vague generic topic.
-        topic = await self._build_rumor_seed()
+        topic, subject = await self._build_rumor_seed()
+        member_context = await self._build_context_block(subject)
 
         logger.info(f"Generating random rumor about: {topic}")
         
@@ -904,7 +1133,8 @@ class LeagueRumors(commands.Cog):
         # Only include league context for fantasy league rumors
         if context == "league":
             team_names = await self._get_team_names()
-            member_context = await self._get_roster_context()
+            subject = await self._extract_subject_from_text(rumor)
+            member_context = await self._build_context_block(subject)
         else:
             # NFL news - no league-specific context
             team_names = None
@@ -979,14 +1209,14 @@ class LeagueRumors(commands.Cog):
         # Same seed mix (real events, table-generated scenarios, canned
         # topics) the auto-post loop uses - optionally scoped to a category
         # or overridden entirely by freeform context.
-        rumor_seed = await self._build_rumor_seed(
+        rumor_seed, subject = await self._build_rumor_seed(
             category=category.value if category else None,
             context=context,
         )
 
         # Pick a random reporter
         reporter_name, reporter_style, emoji = self._get_random_reporter()
-        member_context = await self._get_roster_context()
+        member_context = await self._build_context_block(subject)
         
         try:
             # Have AI expand on the generated seed

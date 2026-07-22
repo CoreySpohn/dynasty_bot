@@ -3,9 +3,12 @@
 import random
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import pytest_asyncio
 
+import cogs.trade_values as trade_values_module
 from cogs.rumors import STYLE_NOTES, LeagueRumors
+from database import Database
 
 
 @pytest_asyncio.fixture
@@ -14,6 +17,38 @@ async def rumors_cog(mock_bot):
     cog = LeagueRumors(mock_bot)
     yield cog
     cog.random_rumor_task.cancel()
+
+
+@pytest_asyncio.fixture
+async def ktc_db():
+    """An in-memory database, patched in as cogs.trade_values' module-level `db`.
+
+    cogs.rumors imports data-access functions directly from cogs.trade_values
+    (get_latest_snapshot, get_team_dynasty_values, get_value_trend), and
+    those functions close over trade_values' own `db` global - so that's
+    the object that needs patching, not anything in cogs.rumors.
+    """
+    database = Database(":memory:")
+    await database.connect()
+    with patch.object(trade_values_module, "db", database):
+        yield database
+    await database.close()
+
+
+async def _insert_ktc_row(
+    db, ktc_id, sleeper_id, name, position, value_sf, recorded_date
+):
+    async with db.execute(
+        """
+        INSERT INTO ktc_values (
+            ktc_id, sleeper_id, player_name, position, team, is_rookie,
+            value_1qb, rank_1qb, positional_rank_1qb,
+            value_sf, rank_sf, positional_rank_sf, recorded_date
+        ) VALUES (?, ?, ?, ?, 'CIN', 0, ?, 1, 1, ?, 1, 1, ?)
+        """,
+        (ktc_id, sleeper_id, name, position, value_sf, value_sf, recorded_date),
+    ):
+        pass
 
 
 class TestRandomRumorTaskAutostarts:
@@ -71,25 +106,30 @@ class TestGenerateFromTables:
             {"name": "Bob", "team_name": "Team B", "players": ["Player Two"]},
         ]
 
-        result = await rumors_cog._generate_from_tables(owner_data)
+        result, subject = await rumors_cog._generate_from_tables(owner_data)
 
         assert "Alice" in result or "Bob" in result
         assert "Player One" in result or "Player Two" in result
         assert "{" not in result
+        # subject chains onto whichever owner1/player1 the roll actually picked.
+        assert subject["owner"]["name"] in ("Alice", "Bob")
+        assert subject["player_name"] in ("Player One", "Player Two")
 
     async def test_falls_back_when_no_templates_configured(self, rumors_cog):
         rumors_cog.rumor_tables = {}
 
-        result = await rumors_cog._generate_from_tables([])
+        result, subject = await rumors_cog._generate_from_tables([])
 
         assert result == "a mysterious trade brewing in the league"
+        assert subject == {}
 
     async def test_handles_no_owner_data(self, rumors_cog):
         rumors_cog.rumor_tables = {"templates": {"general": ["{owner1} is up to something"]}}
 
-        result = await rumors_cog._generate_from_tables([])
+        result, subject = await rumors_cog._generate_from_tables([])
 
         assert "An owner" in result
+        assert subject["owner"] is None
 
     async def test_restricts_to_requested_category(self, rumors_cog):
         rumors_cog.rumor_tables = {
@@ -99,14 +139,14 @@ class TestGenerateFromTables:
             }
         }
 
-        result = await rumors_cog._generate_from_tables([], category="draft")
+        result, _ = await rumors_cog._generate_from_tables([], category="draft")
 
         assert result == "draft template about An owner"
 
     async def test_unknown_category_falls_back_to_full_mix(self, rumors_cog):
         rumors_cog.rumor_tables = {"templates": {"draft": ["only template about {owner1}"]}}
 
-        result = await rumors_cog._generate_from_tables([], category="not-a-real-category")
+        result, _ = await rumors_cog._generate_from_tables([], category="not-a-real-category")
 
         assert result == "only template about An owner"
 
@@ -260,15 +300,21 @@ class TestBuildRumorSeed:
     """Coverage for the combined seed builder used by both auto-post and /randomrumor."""
 
     async def test_returns_non_empty_seed_even_when_sleeper_unavailable(self, rumors_cog):
-        seed = await rumors_cog._build_rumor_seed()
+        seed, subject = await rumors_cog._build_rumor_seed()
 
         assert seed
         assert isinstance(seed, str)
+        assert isinstance(subject, dict)
 
     async def test_context_overrides_category_and_table_generation(self, rumors_cog):
-        seed = await rumors_cog._build_rumor_seed(category="draft", context="a very specific ask")
+        seed, subject = await rumors_cog._build_rumor_seed(
+            category="draft", context="a very specific ask"
+        )
 
         assert seed.startswith("a very specific ask")
+        # No owner/player named in that freeform text, so nothing to chain onto -
+        # but _extract_subject_from_text always returns owner/player keys.
+        assert subject == {"owner": None, "player_name": None}
 
     async def test_category_scopes_seed_to_that_templates_bucket(self, rumors_cog):
         rumors_cog.rumor_tables = {
@@ -279,8 +325,210 @@ class TestBuildRumorSeed:
         }
 
         for _ in range(5):
-            seed = await rumors_cog._build_rumor_seed(category="draft")
+            seed, _ = await rumors_cog._build_rumor_seed(category="draft")
             assert seed.startswith("draft-only seed about")
+
+
+class TestExtractSubjectFromText:
+    """Coverage for parsing named entities out of real user-submitted text,
+    e.g. "Corey wants to draft Mendoza" -> Corey's owner data + Mendoza's
+    KTC row, so the context roll has something specific to chain onto."""
+
+    async def test_finds_owner_and_player_by_name(self, rumors_cog, ktc_db):
+        rumors_cog._get_owner_data_for_rumors = AsyncMock(
+            return_value=[{"name": "Corey", "players": [], "team_name": ""}]
+        )
+        await _insert_ktc_row(ktc_db, 1, "p1", "Fernando Mendoza", "QB", 3000, "2026-07-22")
+
+        subject = await rumors_cog._extract_subject_from_text(
+            "Corey wants to draft Mendoza"
+        )
+
+        assert subject["owner"]["name"] == "Corey"
+        assert subject["player_name"] == "Fernando Mendoza"
+
+    async def test_no_match_returns_none_fields(self, rumors_cog, ktc_db):
+        rumors_cog._get_owner_data_for_rumors = AsyncMock(
+            return_value=[{"name": "Corey", "players": [], "team_name": ""}]
+        )
+
+        subject = await rumors_cog._extract_subject_from_text(
+            "something totally unrelated happened"
+        )
+
+        assert subject == {"owner": None, "player_name": None}
+
+    async def test_empty_text_short_circuits(self, rumors_cog):
+        subject = await rumors_cog._extract_subject_from_text("")
+
+        assert subject == {}
+
+    async def test_short_names_are_not_matched(self, rumors_cog, ktc_db):
+        # "Al" is too short to safely match as a substring in freeform text.
+        rumors_cog._get_owner_data_for_rumors = AsyncMock(
+            return_value=[{"name": "Al", "players": [], "team_name": ""}]
+        )
+        await _insert_ktc_row(ktc_db, 1, "p1", "AJ Fox", "WR", 1000, "2026-07-22")
+
+        subject = await rumors_cog._extract_subject_from_text("Al thinks his team is great")
+
+        assert subject["owner"] is None
+        assert subject["player_name"] is None
+
+
+class TestBuildContextBlock:
+    """Coverage for the single weighted roll that decides what extra
+    context (if any) rides along with a rumor - replacing the old
+    behavior of always injecting the full roster dump."""
+
+    async def test_none_module_returns_no_context(self, rumors_cog, monkeypatch):
+        monkeypatch.setattr(random, "choices", lambda *a, **k: ["none"])
+
+        result = await rumors_cog._build_context_block({})
+
+        assert result is None
+
+    async def test_full_roster_module_has_no_optional_color_suffix(self, rumors_cog, monkeypatch):
+        monkeypatch.setattr(random, "choices", lambda *a, **k: ["full_roster"])
+        rumors_cog._get_roster_context = AsyncMock(return_value="- Alice's roster includes: X")
+
+        result = await rumors_cog._build_context_block({})
+
+        assert result == "- Alice's roster includes: X"
+
+    async def test_non_full_roster_module_is_marked_optional(self, rumors_cog, monkeypatch):
+        monkeypatch.setattr(random, "choices", lambda *a, **k: ["single_roster"])
+        subject = {"owner": {"name": "Alice", "players": ["Puka Nacua"], "team_name": ""}}
+
+        result = await rumors_cog._build_context_block(subject)
+
+        assert "Alice's current roster includes: Puka Nacua" in result
+        assert "Optional color" in result
+
+    async def test_module_exception_is_caught_and_returns_none(self, rumors_cog, monkeypatch):
+        monkeypatch.setattr(random, "choices", lambda *a, **k: ["team_value"])
+        rumors_cog._ctx_team_value = AsyncMock(side_effect=RuntimeError("boom"))
+
+        result = await rumors_cog._build_context_block({})
+
+        assert result is None
+
+
+class TestCtxSingleRoster:
+    """Coverage for the single-owner-roster context module."""
+
+    async def test_chains_to_subject_owner(self, rumors_cog):
+        subject = {"owner": {"name": "Alice", "players": ["Puka Nacua", "Bijan Robinson"]}}
+
+        result = await rumors_cog._ctx_single_roster(subject)
+
+        assert result == "Alice's current roster includes: Puka Nacua, Bijan Robinson"
+
+    async def test_falls_back_to_random_owner_without_subject(self, rumors_cog):
+        rumors_cog._get_owner_data_for_rumors = AsyncMock(
+            return_value=[{"name": "Bob", "players": ["Justin Jefferson"], "team_name": ""}]
+        )
+
+        result = await rumors_cog._ctx_single_roster({})
+
+        assert result == "Bob's current roster includes: Justin Jefferson"
+
+    async def test_returns_none_when_no_rosters_available(self, rumors_cog):
+        rumors_cog._get_owner_data_for_rumors = AsyncMock(return_value=[])
+
+        result = await rumors_cog._ctx_single_roster({})
+
+        assert result is None
+
+
+class TestCtxPlayerValue:
+    """Coverage for the player-KTC-value context module."""
+
+    async def test_chains_to_subject_player(self, rumors_cog, ktc_db):
+        await _insert_ktc_row(ktc_db, 1, "p1", "Puka Nacua", "WR", 8500, "2026-07-22")
+        await _insert_ktc_row(ktc_db, 2, "p2", "Some Other Guy", "RB", 1000, "2026-07-22")
+
+        result = await rumors_cog._ctx_player_value({"player_name": "Puka Nacua"})
+
+        assert "Puka Nacua" in result
+        assert "8,500" in result
+        assert "Some Other Guy" not in result
+
+    async def test_falls_back_to_random_player_without_subject(self, rumors_cog, ktc_db):
+        await _insert_ktc_row(ktc_db, 1, "p1", "Puka Nacua", "WR", 8500, "2026-07-22")
+
+        result = await rumors_cog._ctx_player_value({})
+
+        assert "Puka Nacua" in result
+
+    async def test_returns_none_with_no_synced_data(self, rumors_cog, ktc_db):
+        result = await rumors_cog._ctx_player_value({})
+
+        assert result is None
+
+
+class TestCtxTeamValue:
+    """Coverage for the team-dynasty-value context module."""
+
+    async def test_chains_to_subject_owner_and_ranks_it(self, rumors_cog, ktc_db):
+        await _insert_ktc_row(ktc_db, 1, "p1", "Star Player", "WR", 9000, "2026-07-22")
+        await _insert_ktc_row(ktc_db, 2, "p2", "Bench Guy", "RB", 1000, "2026-07-22")
+
+        rumors_cog.bot.sleeper.get_rosters = AsyncMock(
+            return_value=[
+                {"roster_id": 1, "owner_id": "u1", "players": ["p1"]},
+                {"roster_id": 2, "owner_id": "u2", "players": ["p2"]},
+            ]
+        )
+        rumors_cog.bot.sleeper.get_users = AsyncMock(
+            return_value=[
+                {"user_id": "u1", "display_name": "Alice"},
+                {"user_id": "u2", "display_name": "Bob"},
+            ]
+        )
+
+        result = await rumors_cog._ctx_team_value({"owner": {"name": "Alice"}})
+
+        assert "Alice" in result
+        assert "9,000" in result
+        assert "#1 of 2" in result
+
+    async def test_returns_none_with_no_synced_data(self, rumors_cog, ktc_db):
+        rumors_cog.bot.sleeper.get_rosters = AsyncMock(
+            return_value=[{"roster_id": 1, "owner_id": "u1", "players": ["p1"]}]
+        )
+        rumors_cog.bot.sleeper.get_users = AsyncMock(return_value=[])
+
+        result = await rumors_cog._ctx_team_value({})
+
+        assert result is None
+
+
+class TestCtxValueTrend:
+    """Coverage for the 7-day KTC value swing context module."""
+
+    async def test_reports_a_rise(self, rumors_cog, ktc_db):
+        await _insert_ktc_row(ktc_db, 1, "p1", "Puka Nacua", "WR", 4000, "2026-07-15")
+        await _insert_ktc_row(ktc_db, 1, "p1", "Puka Nacua", "WR", 5000, "2026-07-22")
+
+        result = await rumors_cog._ctx_value_trend({"player_name": "Puka Nacua"})
+
+        assert result is not None
+        assert "risen" in result
+        assert "1,000" in result
+
+    async def test_flat_trend_returns_none(self, rumors_cog, ktc_db):
+        await _insert_ktc_row(ktc_db, 1, "p1", "Puka Nacua", "WR", 5000, "2026-07-15")
+        await _insert_ktc_row(ktc_db, 1, "p1", "Puka Nacua", "WR", 5000, "2026-07-22")
+
+        result = await rumors_cog._ctx_value_trend({"player_name": "Puka Nacua"})
+
+        assert result is None
+
+    async def test_returns_none_with_no_synced_data(self, rumors_cog, ktc_db):
+        result = await rumors_cog._ctx_value_trend({})
+
+        assert result is None
 
 
 class TestReporterWeighting:
