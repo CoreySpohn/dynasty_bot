@@ -21,7 +21,9 @@ from discord.ext import commands, tasks
 
 from config import SLEEPER_LEAGUE_ID
 from lib.ai_client import GeminiClient
+from lib.claude_client import ClaudeClient
 from lib.members import get_member_registry
+from lib.openai_client import OpenAIClient
 
 if TYPE_CHECKING:
     from main import DynastyBot
@@ -119,7 +121,7 @@ class ReporterSelect(discord.ui.Select):
         
         # Rewrite the rumor
         try:
-            rewritten = await self.cog.ai_client.rewrite_as_reporter(
+            rewritten = await self.cog._get_ai_client().rewrite_as_reporter(
                 rumor=self.rumor_text,
                 reporter_name=reporter_name,
                 reporter_style=reporter_style,
@@ -174,8 +176,27 @@ class LeagueRumors(commands.Cog):
         self.bot = bot
         self.league_id = SLEEPER_LEAGUE_ID
         self.config = load_reporters_config()
-        self.ai_client = GeminiClient()
-        
+
+        # A pool of AI backends to pick from at random for each generation.
+        # Different models write in noticeably different voices, so rotating
+        # between them adds variety on top of the reporter personas
+        # themselves (which alone tend to sound similar since they all run
+        # through the same underlying model).
+        self.ai_clients = [
+            client
+            for client in [
+                GeminiClient(),
+                ClaudeClient(model_name="claude-haiku-4-5"),
+                ClaudeClient(model_name="claude-sonnet-5"),
+                OpenAIClient(model_name="gpt-5.6-luna"),
+                OpenAIClient(model_name="gpt-5.6-terra"),
+            ]
+            if client.client is not None
+        ]
+        if not self.ai_clients:
+            logger.warning("No AI backends configured (missing API keys); rumors will use fallback text")
+            self.ai_clients = [GeminiClient()]
+
         # Load rumor generation tables
         self.rumor_tables = self._load_rumor_tables()
         
@@ -314,6 +335,15 @@ class LeagueRumors(commands.Cog):
             logger.error(f"Failed to get owner data: {e}")
             return [{"name": m.name, "team_name": "", "players": []} for m in registry.members]
     
+    def _get_ai_client(self):
+        """Pick a random AI backend for this generation.
+
+        Rotating models (not just reporter personas) adds real stylistic
+        variety, since two personas run through the same model tend to
+        converge on that model's own writing quirks.
+        """
+        return random.choice(self.ai_clients)
+
     async def cog_load(self) -> None:
         """Called when the cog is loaded."""
         logger.info("League Rumors cog loaded")
@@ -574,7 +604,7 @@ class LeagueRumors(commands.Cog):
         logger.info(f"Generating random rumor about: {topic}")
         
         try:
-            rumor = await self.ai_client.generate_random_rumor(
+            rumor = await self._get_ai_client().generate_random_rumor(
                 topic=topic,
                 team_names=team_names,
                 reporter_name=reporter_name,
@@ -659,7 +689,7 @@ class LeagueRumors(commands.Cog):
                 return
             
             # Use AI to parse the custom personality
-            reporter_name, emoji, reporter_style = await self.ai_client.parse_custom_reporter(
+            reporter_name, emoji, reporter_style = await self._get_ai_client().parse_custom_reporter(
                 custom_personality
             )
         elif reporter == "random":
@@ -690,7 +720,7 @@ class LeagueRumors(commands.Cog):
         target_channel = self.nfl_channel_id if context == "nfl" else self.rumors_channel_id
         
         try:
-            rewritten = await self.ai_client.rewrite_as_reporter(
+            rewritten = await self._get_ai_client().rewrite_as_reporter(
                 rumor=rumor,
                 reporter_name=reporter_name,
                 reporter_style=reporter_style,
@@ -750,7 +780,7 @@ class LeagueRumors(commands.Cog):
         
         try:
             # Have AI expand on the generated seed
-            rumor = await self.ai_client.generate_random_rumor(
+            rumor = await self._get_ai_client().generate_random_rumor(
                 topic=rumor_seed,  # Pass the filled template as the topic
                 team_names=await self._get_team_names(),
                 reporter_name=reporter_name,

@@ -18,6 +18,18 @@ class TestSleeperClient:
         """Create a SleeperClient instance for testing."""
         return SleeperClient(aiohttp_session)
 
+    async def test_get_nfl_state(self, client, mock_aioresponses):
+        """Test fetching the current NFL state (week, season_type)."""
+        mock_aioresponses.get(
+            "https://api.sleeper.app/v1/state/nfl",
+            payload={"week": 5, "season_type": "regular", "season": "2025"},
+        )
+
+        result = await client.get_nfl_state()
+
+        assert result["week"] == 5
+        assert result["season_type"] == "regular"
+
     async def test_get_league(
         self, client, mock_aioresponses, sample_league_data
     ):

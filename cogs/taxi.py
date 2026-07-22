@@ -84,57 +84,101 @@ class TaxiRaiding(commands.Cog):
     async def raid_reminder_loop(self) -> None:
         """Check pending raids every 24 hours and send reminders."""
         try:
-            # Get pending raids from database
-            async with db.connection.execute("""
-                SELECT id, raider_user_id, victim_user_id, player_id, player_name, raid_date
-                FROM raids
-                WHERE status = 'pending'
-            """) as cursor:
-                pending = await cursor.fetchall()
-            
-            if not pending:
-                return
-            
-            registry = get_member_registry()
-            
-            for raid_id, raider_id, victim_sleeper_id, player_id, player_name, raid_date in pending:
-                # Check if player is still on victim's taxi squad
-                result = await self._find_taxi_player_owner(player_id)
-                
-                if not result:
-                    # Player no longer on taxi - raid completed or player moved
-                    await db.connection.execute(
-                        "UPDATE raids SET status = 'completed' WHERE id = ?",
-                        (raid_id,)
-                    )
-                    await db.connection.commit()
-                    logger.info(f"Raid {raid_id} marked completed - player {player_name} no longer on taxi")
-                    continue
-                
-                # Player still on taxi - send reminder
-                if ALERT_CHANNEL_ID:
-                    channel = self.bot.get_channel(ALERT_CHANNEL_ID)
-                    if channel:
-                        # Find victim's Discord ID
-                        victim_member = registry.find_by_sleeper_id(victim_sleeper_id)
-                        victim_mention = f"<@{victim_member.discord_id}>" if victim_member else "Owner"
-                        
-                        # Find raider mention
-                        raider_mention = f"<@{raider_id}>"
-                        
-                        await channel.send(
-                            f"⏰ **RAID REMINDER** ⏰\n"
-                            f"{victim_mention} - **{player_name}** is still being raided by {raider_mention}!\n"
-                            f"The player must be moved off your taxi squad."
-                        )
-                        logger.info(f"Sent raid reminder for {player_name}")
+            await self._check_pending_raids()
         except Exception as e:
             logger.error(f"Error in raid reminder loop: {e}")
-    
+
+    async def _check_pending_raids(self) -> int:
+        """Check pending raids and send a reminder for any still active.
+
+        Returns:
+            The number of reminder messages sent.
+        """
+        # Get pending raids from database
+        async with db.connection.execute("""
+            SELECT id, raider_user_id, victim_user_id, player_id, player_name, raid_date
+            FROM raids
+            WHERE status = 'pending'
+        """) as cursor:
+            pending = await cursor.fetchall()
+
+        if not pending:
+            return 0
+
+        registry = get_member_registry()
+        reminders_sent = 0
+
+        for raid_id, raider_id, victim_sleeper_id, player_id, player_name, raid_date in pending:
+            # Check if player is still on victim's taxi squad
+            result = await self._find_taxi_player_owner(player_id)
+
+            if not result:
+                # Player no longer on taxi - raid completed or player moved
+                await db.connection.execute(
+                    "UPDATE raids SET status = 'completed' WHERE id = ?",
+                    (raid_id,)
+                )
+                await db.connection.commit()
+                logger.info(f"Raid {raid_id} marked completed - player {player_name} no longer on taxi")
+                continue
+
+            # Player still on taxi - send reminder
+            if not ALERT_CHANNEL_ID:
+                logger.warning("ALERT_CHANNEL_ID not configured, skipping raid reminder")
+                continue
+
+            channel = self.bot.get_channel(ALERT_CHANNEL_ID)
+            if not channel:
+                logger.error(f"Could not find alert channel {ALERT_CHANNEL_ID}")
+                continue
+
+            # Find victim's Discord ID
+            victim_member = registry.find_by_sleeper_id(victim_sleeper_id)
+            victim_mention = f"<@{victim_member.discord_id}>" if victim_member else "Owner"
+
+            # Find raider mention
+            raider_mention = f"<@{raider_id}>"
+
+            await channel.send(
+                f"⏰ **RAID REMINDER** ⏰\n"
+                f"{victim_mention} - **{player_name}** is still being raided by {raider_mention}!\n"
+                f"The player must be moved off your taxi squad."
+            )
+            logger.info(f"Sent raid reminder for {player_name}")
+            reminders_sent += 1
+
+        return reminders_sent
+
     @raid_reminder_loop.before_loop
     async def before_raid_reminder(self) -> None:
         """Wait for bot to be ready before starting loop."""
         await self.bot.wait_until_ready()
+
+    @app_commands.command(
+        name="checkraids",
+        description="[Admin] Manually check pending raids and send reminders now",
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def check_raids_now(self, interaction: discord.Interaction) -> None:
+        """Admin command to force a pending-raid reminder check immediately."""
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            sent = await self._check_pending_raids()
+        except Exception as e:
+            logger.error(f"Manual raid check failed: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ Error checking raids: {e}", ephemeral=True)
+            return
+
+        if sent == 0:
+            await interaction.followup.send(
+                "✅ Checked pending raids. None pending, or nothing to remind.",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send(
+                f"✅ Checked pending raids. Sent {sent} reminder(s).", ephemeral=True
+            )
     
     async def _build_player_name_cache(self) -> None:
         """Build a lowercase name -> player_id lookup cache."""

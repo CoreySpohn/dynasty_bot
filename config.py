@@ -40,9 +40,5 @@ ALERT_CHANNEL_ID: int | None = (
     else None
 )
 
-# Scheduler Configuration
-# Channel for commissioner alerts and deadline reminders
-COMMISH_ALERTS_CHANNEL_ID: int = 1462499662635466987
-
 # Timezone for reminder scheduling (defaults to EST)
 REMINDER_TIMEZONE: str = os.getenv("REMINDER_TIMEZONE", "America/New_York")

@@ -39,6 +39,10 @@ templates:
   - "Sources say {owner1} is planning to trade up in the draft. They want {draft_target_type}."
   - "{owner1} is going all-in on {position} this draft. {draft_reason}"
   - "Insiders say {owner1} regrets not drafting {position} last year. {reaction}"
+  - "{owner1} is reportedly obsessed with landing {rookie_prospect} in the rookie draft. {draft_reason}"
+  - "Sources say {owner1} would trade next year's first for {rookie_prospect}. {reaction}"
+  - "{owner1} and {owner2} are both eyeing {rookie_prospect} at the top of the rookie draft. {trade_drama}"
+  - "Rookie draft buzz: {owner1} thinks {rookie_prospect} is being slept on. {speculation}"
   
   # Roster moves
   - "{owner1} was spotted frantically checking the waiver wire at {time_of_day}. {speculation}"
@@ -89,6 +93,22 @@ trade_drama:
   - "The whole league is watching."
   - "It's getting HEATED."
   - "This could reshape the league."
+
+# Top rookie prospects for this year's rookie draft (name + position).
+# Regenerate with: uv run python scripts/update_rookie_prospects.py
+rookie_prospect:
+  - "Jeremiyah Love (RB)"
+  - "Fernando Mendoza (QB)"
+  - "Carnell Tate (WR)"
+  - "Jadarian Price (RB)"
+  - "Jordyn Tyson (WR)"
+  - "Makai Lemon (WR)"
+  - "Kenyon Sadiq (TE)"
+  - "Emmett Johnson (RB)"
+  - "KC Concepcion (WR)"
+  - "Jonah Coleman (RB)"
+  - "Mike Washington (RB)"
+  - "Eli Stowers (TE)"
 
 draft_target_type:
   - "a generational QB prospect"
