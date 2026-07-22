@@ -79,9 +79,7 @@ Write the report AS {reporter_name} (stay in character!):"""
         else:
             context = ""
             if member_context:
-                context += f"\n\nLEAGUE MEMBERS AND THEIR FANTASY TEAMS:\n{member_context}"
-            if team_names:
-                context += f"\n\nAll team names: {', '.join(team_names)}"
+                context += f"\n\nLEAGUE MEMBERS:\n{member_context}"
 
             prompt = f"""You are {reporter_name} reporting on a fantasy football league.
 
@@ -92,8 +90,8 @@ Rewrite this league rumor in YOUR unique voice. Make it sound authentically like
 {reporter_name} would actually say. Use your catchphrases, mannerisms, and personality quirks.
 Keep it brief (2-4 sentences). Be entertaining and dramatic.
 
-Use people's REAL FIRST NAMES (Corey, Fuzzy, Rob Jr., James, David, Grant, Aaron, Aneesh, Rob Sr., Brendan, Noah, Kalani).
-Reference their fantasy teams when relevant.
+Use people's REAL FIRST NAMES ONLY (Corey, Fuzzy, Rob Jr., James, David, Grant, Aaron, Aneesh, Rob Sr., Brendan, Noah, Kalani).
+Do not mention fantasy team names - first names alone are enough.
 Do not add any meta-commentary - just write the report.{context}
 
 ORIGINAL RUMOR/INFO:
@@ -139,12 +137,12 @@ Write the report AS {reporter_name} (stay in character!):"""
 
         member_info = ""
         if member_context:
-            member_info = f"\n\nLEAGUE MEMBERS AND THEIR FANTASY TEAMS:\n{member_context}"
+            member_info = f"\n\nLEAGUE MEMBERS:\n{member_context}"
 
         prompt = f"""You are a fantasy football league reporter creating entertaining fake rumors.
 Generate a fun, dramatic, but believable-ish rumor about the topic below.
 
-CRITICAL: Always use people's REAL FIRST NAMES (Corey, Fuzzy, Rob Jr., James, David, Grant, Aaron, Aneesh, Rob Sr., Brendan, Noah, Kalani). Reference their fantasy team names when relevant.
+CRITICAL: Always use people's REAL FIRST NAMES ONLY (Corey, Fuzzy, Rob Jr., James, David, Grant, Aaron, Aneesh, Rob Sr., Brendan, Noah, Kalani). Do not mention fantasy team names.
 
 Keep it brief (2-4 sentences). Make it entertaining and spicy!
 This is all for fun - make it obviously tongue-in-cheek while staying in character.
