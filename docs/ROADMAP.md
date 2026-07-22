@@ -113,7 +113,11 @@ Make sure bot alerts like taxi squad raiding or lineup alerts are tagging the pr
 Notify when specific players are dropped to waivers.
 
 ### Trade Calculator Integration
-Pull trade values from external sources (KeepTradeCut, FantasyCalc).
+KeepTradeCut dynasty values are now synced daily and tracked historically
+(`/tradevalue`, `/synctradevalues`, `ktc_values` table). Still open: a
+`/tradecalc` command that sums proposed players/picks on each side of a
+trade and calls it fair/lopsided, plus a second source (FantasyCalc) for
+cross-checking.
 
 ### Draft Recap
 Auto-generate draft grades and hot takes after rookie drafts.

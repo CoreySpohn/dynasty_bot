@@ -283,6 +283,36 @@ class Database:
             )
         """)
         
+        # KeepTradeCut dynasty trade value snapshots
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS ktc_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ktc_id INTEGER NOT NULL,
+                sleeper_id TEXT,
+                player_name TEXT NOT NULL,
+                position TEXT NOT NULL,
+                team TEXT,
+                is_rookie BOOLEAN DEFAULT FALSE,
+                value_1qb INTEGER,
+                rank_1qb INTEGER,
+                positional_rank_1qb INTEGER,
+                value_sf INTEGER,
+                rank_sf INTEGER,
+                positional_rank_sf INTEGER,
+                recorded_date TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ktc_id, recorded_date)
+            )
+        """)
+        await self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ktc_values_sleeper_id
+            ON ktc_values(sleeper_id, recorded_date)
+        """)
+        await self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ktc_values_player_name
+            ON ktc_values(player_name, recorded_date)
+        """)
+
         await self.connection.commit()
 
 

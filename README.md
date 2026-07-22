@@ -84,6 +84,21 @@ uv run python main.py
 
 ---
 
+### 💰 Trade Values
+
+Dynasty trade values are synced daily from KeepTradeCut and stored historically so trends can be tracked over time.
+
+| Command | Description |
+|---------|-------------|
+| `/tradevalue <player>` | Look up a player's current 1QB/Superflex value, rank, and 7-day trend |
+
+**Admin Commands:**
+| Command | Description |
+|---------|-------------|
+| `/synctradevalues` | Manually refresh trade values from KeepTradeCut |
+
+---
+
 ### 🎭 Random Responses
 
 | Command | Description |
