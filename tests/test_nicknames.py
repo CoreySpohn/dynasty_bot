@@ -197,8 +197,8 @@ class TestSyncStandingsNicknames:
         tagged = await cog._sync_standings_nicknames()
 
         assert tagged == 2
-        apply_mock.assert_any_await(member_a, "1st")
-        apply_mock.assert_any_await(member_b, "2nd")
+        apply_mock.assert_any_await(member_a, "1st place")
+        apply_mock.assert_any_await(member_b, "2nd place")
 
     async def test_skips_members_with_no_resolvable_rank(self, nicknames_cog, monkeypatch):
         cog, guild = nicknames_cog
@@ -246,8 +246,8 @@ class TestSyncDraftOrderNicknames:
         tagged = await cog._sync_draft_order_nicknames()
 
         assert tagged == 2
-        apply_mock.assert_any_await(member_a, "Pick 1/2")
-        apply_mock.assert_any_await(member_b, "Pick 2/2")
+        apply_mock.assert_any_await(member_a, "Pick 1")
+        apply_mock.assert_any_await(member_b, "Pick 2")
 
     async def test_returns_zero_when_draft_cog_not_loaded(self, nicknames_cog):
         cog, guild = nicknames_cog

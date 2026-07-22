@@ -1,7 +1,7 @@
 """Discord nickname tagging.
 
 Applies a short bracketed tag onto a member's existing nickname (e.g.
-"Corey [3rd]") without clobbering whatever they already had, and can
+"Corey [3rd place]") without clobbering whatever they already had, and can
 later strip just the tag back off. The base nickname is tracked in the
 database rather than parsed back out of the live nickname, since a member
 can rename themselves at any time and that should become the new base

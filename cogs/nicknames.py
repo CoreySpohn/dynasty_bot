@@ -91,7 +91,7 @@ class NicknameTags(commands.Cog):
             if not member:
                 continue
 
-            if await apply_tag(member, ordinal(rank)):
+            if await apply_tag(member, f"{ordinal(rank)} place"):
                 tagged += 1
 
         return tagged
@@ -134,7 +134,7 @@ class NicknameTags(commands.Cog):
 
     async def _sync_draft_order_nicknames(self) -> int:
         """Tag every owner's nickname with their slot in the calculated rookie
-        draft order (e.g. "Pick 3/12").
+        draft order (e.g. "Pick 3").
 
         Uses each owner's original slot from calculate_draft_order - same as
         what /draftorder displays - and doesn't reconcile traded picks.
@@ -154,7 +154,6 @@ class NicknameTags(commands.Cog):
         teams = await draft_cog._fetch_team_stats()
         calculate_payouts(teams)
         draft_order = calculate_draft_order(teams)
-        total = len(draft_order)
 
         tagged = 0
         for slot, team in enumerate(draft_order, start=1):
@@ -166,7 +165,7 @@ class NicknameTags(commands.Cog):
             if not member:
                 continue
 
-            if await apply_tag(member, f"Pick {slot}/{total}"):
+            if await apply_tag(member, f"Pick {slot}"):
                 tagged += 1
 
         return tagged
