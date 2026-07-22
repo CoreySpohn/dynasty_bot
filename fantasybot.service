@@ -1,0 +1,20 @@
+[Unit]
+Description=Dynasty Fantasy Football Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dev
+WorkingDirectory=/home/dev/github/dynasty_bot
+ExecStart=/home/dev/.local/bin/uv run python main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment file for secrets
+EnvironmentFile=/home/dev/github/dynasty_bot/.env
+
+[Install]
+WantedBy=multi-user.target

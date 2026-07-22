@@ -187,8 +187,7 @@ class LeagueRumors(commands.Cog):
         self._team_names: Optional[list[str]] = None
         
         # Start random rumor task
-        # NOTE: Disabled for now to avoid spam during testing
-        # self.random_rumor_task.start()
+        self.random_rumor_task.start()
     
     def _load_rumor_tables(self) -> dict:
         """Load rumor generation tables from YAML."""

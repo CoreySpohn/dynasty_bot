@@ -59,6 +59,15 @@ class SleeperClient:
             response.raise_for_status()
             return await response.json()
     
+    async def get_nfl_state(self) -> dict[str, Any]:
+        """Get the current NFL state (week, season, season_type).
+
+        Returns:
+            State data including `week` and `season_type`
+            ("pre" | "regular" | "post" | "off").
+        """
+        return await self._get("/state/nfl")
+
     async def get_league(self, league_id: str) -> dict[str, Any]:
         """Get league settings and metadata.
         
