@@ -240,22 +240,35 @@ class LeagueRumors(commands.Cog):
             logger.error(f"Failed to load rumor tables: {e}")
             return {}
     
-    async def _generate_from_tables(self, owner_data: list[dict]) -> str:
+    async def _generate_from_tables(
+        self, owner_data: list[dict], category: Optional[str] = None
+    ) -> str:
         """Generate a rumor base by randomly filling a template with table values.
-        
+
         Args:
             owner_data: List of dicts with 'name', 'team_name', 'players' keys
-            
+            category: Optional category to restrict templates to ("trade",
+                "draft", "drama", "general"). Falls back to the full mix if
+                the category is unknown or omitted.
+
         Returns:
             A filled-in rumor template string for AI to expand upon.
         """
-        if not self.rumor_tables or not self.rumor_tables.get("templates"):
+        templates_by_category = self.rumor_tables.get("templates") if self.rumor_tables else None
+        if not templates_by_category:
             return "a mysterious trade brewing in the league"
-        
+
+        if category and category in templates_by_category:
+            pool = templates_by_category[category]
+        else:
+            pool = [t for templates in templates_by_category.values() for t in templates]
+
+        if not pool:
+            return "a mysterious trade brewing in the league"
+
         # Pick a random template, avoiding ones used in the last few generations
-        templates = self.rumor_tables["templates"]
-        candidates = [t for t in templates if t not in self._recent_templates]
-        template = random.choice(candidates or templates)
+        candidates = [t for t in pool if t not in self._recent_templates]
+        template = random.choice(candidates or pool)
         self._recent_templates.append(template)
 
         # Find all placeholders in the template
@@ -448,34 +461,52 @@ class LeagueRumors(commands.Cog):
             "Only reference or follow up on it if it fits naturally - otherwise ignore it."
         )
 
-    async def _build_rumor_seed(self) -> str:
+    async def _build_rumor_seed(
+        self, category: Optional[str] = None, context: Optional[str] = None
+    ) -> str:
         """Build a topic/seed for AI rumor generation.
 
         Mixes real events, table-generated scenarios grounded in actual
         rosters, and canned topics so unprompted rumors are as specific and
-        varied as the ones /postrumor produces from tables alone.
+        varied as the ones /randomrumor produces from tables alone.
+
+        Args:
+            category: Optional "trade", "draft", "drama", or "general" to
+                scope table-generated scenarios to that flavor. Real-event
+                grounding and canned topics (which aren't category-tagged)
+                are skipped when a category is given, so the result stays
+                on-theme.
+            context: Optional freeform direction from the caller (e.g. "about
+                Corey and David fighting over a QB"). When given, this is
+                used directly as the seed instead of a random pick.
         """
-        candidates: list[tuple[str, int]] = []
+        if context:
+            seed = context
+        else:
+            candidates: list[tuple[str, int]] = []
 
-        real_event = await self._get_recent_matchup_highlight()
-        if real_event:
-            candidates.append((real_event, 2))
+            if not category:
+                real_event = await self._get_recent_matchup_highlight()
+                if real_event:
+                    candidates.append((real_event, 2))
 
-        owner_data = await self._get_owner_data_for_rumors()
-        table_seed = await self._generate_from_tables(owner_data)
-        if table_seed:
-            candidates.append((table_seed, 3))
+            owner_data = await self._get_owner_data_for_rumors()
+            table_seed = await self._generate_from_tables(owner_data, category=category)
+            if table_seed:
+                candidates.append((table_seed, 3))
 
-        topics = self.config.get("random_topics", [])
-        if topics:
-            candidates.append((random.choice(topics), 2))
+            if not category:
+                topics = self.config.get("random_topics", [])
+                if topics:
+                    candidates.append((random.choice(topics), 2))
 
-        if not candidates:
-            return "league drama"
-
-        seed = random.choices(
-            [c[0] for c in candidates], weights=[c[1] for c in candidates], k=1
-        )[0]
+            seed = (
+                random.choices(
+                    [c[0] for c in candidates], weights=[c[1] for c in candidates], k=1
+                )[0]
+                if candidates
+                else "league drama"
+            )
 
         for extra in (self._maybe_get_callback_note(), self._maybe_get_style_note()):
             if extra:
@@ -900,20 +931,38 @@ class LeagueRumors(commands.Cog):
             )
     
     @app_commands.command(
-        name="postrumor",
+        name="randomrumor",
         description="[Admin] Force post a random rumor now"
+    )
+    @app_commands.describe(
+        category="Scope the rumor to a specific flavor instead of the full random mix",
+        context="Give specific direction for what the rumor should be about (overrides category)",
+    )
+    @app_commands.choices(
+        category=[
+            app_commands.Choice(name="🔄 Trade", value="trade"),
+            app_commands.Choice(name="📋 Draft", value="draft"),
+            app_commands.Choice(name="🔥 Drama / Trash Talk", value="drama"),
+            app_commands.Choice(name="📰 General", value="general"),
+        ]
     )
     @app_commands.default_permissions(administrator=True)
     async def force_random_rumor(
         self,
         interaction: discord.Interaction,
+        category: Optional[app_commands.Choice[str]] = None,
+        context: Optional[str] = None,
     ) -> None:
         """Admin command to force a random rumor post using table-based generation."""
         await interaction.response.defer(ephemeral=True)
 
         # Same seed mix (real events, table-generated scenarios, canned
-        # topics) the auto-post loop uses.
-        rumor_seed = await self._build_rumor_seed()
+        # topics) the auto-post loop uses - optionally scoped to a category
+        # or overridden entirely by freeform context.
+        rumor_seed = await self._build_rumor_seed(
+            category=category.value if category else None,
+            context=context,
+        )
 
         # Pick a random reporter
         reporter_name, reporter_style, emoji = self._get_random_reporter()

@@ -53,7 +53,7 @@ uv run python main.py
 **Admin Commands:**
 | Command | Description |
 |---------|-------------|
-| `/postrumor` | Force post a random rumor |
+| `/randomrumor [category] [context]` | Force post a random rumor, optionally scoped to trade/draft/drama/general or your own freeform direction |
 | `/nflrumor <text>` | Post NFL news to dedicated channel |
 
 ---

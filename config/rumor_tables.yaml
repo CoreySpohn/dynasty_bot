@@ -5,86 +5,91 @@
 # The rumor generator picks ONE template and fills in the blanks
 # with random selections from the appropriate tables
 
+# Templates are grouped by category so commands like /randomrumor can scope
+# generation to just "trade", "draft", "drama", or "general" flavor.
 templates:
-  # Trade rumors
-  - "{owner1} has been secretly texting {owner2} about a blockbuster trade involving {trade_asset}"
-  - "Sources close to {owner1} say they're willing to move {trade_asset} for the right price"
-  - "{owner1} and {owner2} have been in deep trade negotiations. {trade_drama}"
-  - "BREAKING: {owner1} is shopping {trade_asset}. Multiple teams have shown interest."
-  - "{owner1} reportedly turned down a massive offer from {owner2}. {reaction}"
-  
-  # Player-specific trade rumors (uses real roster players!)
-  - "{owner1} is reportedly shopping {player1}. {owner2} has shown interest. {trade_drama}"
-  - "Multiple sources confirm {owner2} has been asking about {player1}. {owner1} hasn't responded."
-  - "BREAKING: {owner1} is fielding offers for {player1}. {speculation}"
-  - "{owner1} and {owner2} have been negotiating a swap of {player1} and {player2}. {trade_drama}"
-  - "Sources say {owner1} values {player1} as untouchable. {owner2} is trying anyway."
-  
-  # Player performance rumors
-  - "{owner1} is worried about {player1}'s production. {speculation}"
-  - "Insiders say {owner1} is concerned about {player1}. Benching incoming?"
-  - "{owner1} can't believe what {player1} did last week. {reaction}"
-  - "{random_player} is on {owner1}'s radar. A trade could be brewing."
-  - "{owner1} has been hyping up {player1} all week. {mock_response}"
-  
-  # Roster construction
-  - "{owner1}'s decision to start {player1} over {player2} has raised eyebrows. {reaction}"
-  - "Sources say {owner1} regrets benching {player1} last week. {regret_detail}"
-  - "{owner1} is reportedly obsessed with acquiring {random_player}. {speculation}"
-  - "League insiders say {player1} is the most undervalued player on {owner1}'s roster."
-  - "{owner1} believes {player1} is about to break out. {mock_response}"
-  
-  # Draft strategy
-  - "{owner1} has their eye on {draft_target_type} in the upcoming draft. {draft_reason}"
-  - "Sources say {owner1} is planning to trade up in the draft. They want {draft_target_type}."
-  - "{owner1} is going all-in on {position} this draft. {draft_reason}"
-  - "Insiders say {owner1} regrets not drafting {position} last year. {reaction}"
-  - "{owner1} is reportedly obsessed with landing {rookie_prospect} in the rookie draft. {draft_reason}"
-  - "Sources say {owner1} would trade next year's first for {rookie_prospect}. {reaction}"
-  - "{owner1} and {owner2} are both eyeing {rookie_prospect} at the top of the rookie draft. {trade_drama}"
-  - "Rookie draft buzz: {owner1} thinks {rookie_prospect} is being slept on. {speculation}"
-  
-  # Roster moves
-  - "{owner1} was spotted frantically checking the waiver wire at {time_of_day}. {speculation}"
-  - "{owner1} is considering dropping {roster_move_reason}. The fanbase is divided."
-  - "Multiple sources confirm {owner1} is rostering players they have never started. {speculation}"
-  - "{owner1}'s bench is {bench_state}. {reaction}"
-  
-  # Team performance
-  - "{owner1}'s playoff hopes are {playoff_status}. {reaction}"
-  - "Power rankings have {owner1} at {ranking_position}. They're reportedly {reaction_emotion}."
-  - "{owner1} had a {performance_adj} week. {mock_quote}"
-  - "{owner1} beat {owner2} by {margin_type}. {trash_talk}"
-  - "{owner1} lost to {owner2} despite {despite_reason}. {condolence}"
-  
-  # Drama and controversy
-  - "Tensions are rising between {owner1} and {owner2} after {drama_reason}."
-  - "{owner1} was overheard saying \"{mock_quote}\" about {owner2}'s team."
-  - "The league is BUZZING after {owner1}'s {controversial_move}. {reaction}"
-  - "{owner1} has been suspiciously quiet this week. {speculation}"
-  - "Anonymous sources claim {owner1} is {accusation}. They deny everything."
-  
-  # Wishful thinking / Predictions
-  - "{owner1} believes they're going to win the championship this year. {mock_response}"
-  - "Bold prediction: {owner1} will finish {prediction_outcome}. {justification}"
-  - "{owner1} is already planning their victory parade. {mock_response}"
-  
-  # Regret and hindsight
-  - "{owner1} is STILL thinking about that trade they made last {timeframe}. {regret_detail}"
-  - "Sources say {owner1} cries themselves to sleep thinking about {regret_player_type}."
-  - "{owner1} could have had {draft_target_type} but passed. {reaction}"
+  trade:
+    # Trade rumors
+    - "{owner1} has been secretly texting {owner2} about a blockbuster trade involving {trade_asset}"
+    - "Sources close to {owner1} say they're willing to move {trade_asset} for the right price"
+    - "{owner1} and {owner2} have been in deep trade negotiations. {trade_drama}"
+    - "BREAKING: {owner1} is shopping {trade_asset}. Multiple teams have shown interest."
+    - "{owner1} reportedly turned down a massive offer from {owner2}. {reaction}"
 
-  # Absurd trade negotiations
-  - "{owner1} offered {owner2} {lowball_offer} for {player1}. {owner2} is still laughing."
-  - "Sources say {owner1} wants {overreach_ask} for a bench-warmer. The league thinks they've lost it."
-  - "{owner1}'s trade demands have gotten so absurd that {owner2} reportedly muted the group chat."
-  - "{owner1} tried to lowball {owner2} for {player1} and got publicly clowned for it."
+    # Player-specific trade rumors (uses real roster players!)
+    - "{owner1} is reportedly shopping {player1}. {owner2} has shown interest. {trade_drama}"
+    - "Multiple sources confirm {owner2} has been asking about {player1}. {owner1} hasn't responded."
+    - "BREAKING: {owner1} is fielding offers for {player1}. {speculation}"
+    - "{owner1} and {owner2} have been negotiating a swap of {player1} and {player2}. {trade_drama}"
+    - "Sources say {owner1} values {player1} as untouchable. {owner2} is trying anyway."
 
-  # Pure shit talk
-  - "{owner1} called {owner2}'s roster \"{roast}\" in the group chat. It got personal fast."
-  - "The group chat roasted {owner1} over {controversial_move}. {reaction}"
-  - "{owner1} has been trash talking non-stop despite {despite_reason}. {owner2} has had enough."
-  - "{owner1} thinks they're the best trash talker in the league. {mock_response}"
+    # Absurd trade negotiations
+    - "{owner1} offered {owner2} {lowball_offer} for {player1}. {owner2} is still laughing."
+    - "Sources say {owner1} wants {overreach_ask} for a bench-warmer. The league thinks they've lost it."
+    - "{owner1}'s trade demands have gotten so absurd that {owner2} reportedly muted the group chat."
+    - "{owner1} tried to lowball {owner2} for {player1} and got publicly clowned for it."
+
+  draft:
+    - "{owner1} has their eye on {draft_target_type} in the upcoming draft. {draft_reason}"
+    - "Sources say {owner1} is planning to trade up in the draft. They want {draft_target_type}."
+    - "{owner1} is going all-in on {position} this draft. {draft_reason}"
+    - "Insiders say {owner1} regrets not drafting {position} last year. {reaction}"
+    - "{owner1} is reportedly obsessed with landing {rookie_prospect} in the rookie draft. {draft_reason}"
+    - "Sources say {owner1} would trade next year's first for {rookie_prospect}. {reaction}"
+    - "{owner1} and {owner2} are both eyeing {rookie_prospect} at the top of the rookie draft. {trade_drama}"
+    - "Rookie draft buzz: {owner1} thinks {rookie_prospect} is being slept on. {speculation}"
+    - "{owner1} could have had {draft_target_type} but passed. {reaction}"
+
+  drama:
+    # Drama and controversy
+    - "Tensions are rising between {owner1} and {owner2} after {drama_reason}."
+    - "{owner1} was overheard saying \"{mock_quote}\" about {owner2}'s team."
+    - "The league is BUZZING after {owner1}'s {controversial_move}. {reaction}"
+    - "{owner1} has been suspiciously quiet this week. {speculation}"
+    - "Anonymous sources claim {owner1} is {accusation}. They deny everything."
+
+    # Pure shit talk
+    - "{owner1} called {owner2}'s roster \"{roast}\" in the group chat. It got personal fast."
+    - "The group chat roasted {owner1} over {controversial_move}. {reaction}"
+    - "{owner1} has been trash talking non-stop despite {despite_reason}. {owner2} has had enough."
+    - "{owner1} thinks they're the best trash talker in the league. {mock_response}"
+
+  general:
+    # Player performance rumors
+    - "{owner1} is worried about {player1}'s production. {speculation}"
+    - "Insiders say {owner1} is concerned about {player1}. Benching incoming?"
+    - "{owner1} can't believe what {player1} did last week. {reaction}"
+    - "{random_player} is on {owner1}'s radar. A trade could be brewing."
+    - "{owner1} has been hyping up {player1} all week. {mock_response}"
+
+    # Roster construction
+    - "{owner1}'s decision to start {player1} over {player2} has raised eyebrows. {reaction}"
+    - "Sources say {owner1} regrets benching {player1} last week. {regret_detail}"
+    - "{owner1} is reportedly obsessed with acquiring {random_player}. {speculation}"
+    - "League insiders say {player1} is the most undervalued player on {owner1}'s roster."
+    - "{owner1} believes {player1} is about to break out. {mock_response}"
+
+    # Roster moves
+    - "{owner1} was spotted frantically checking the waiver wire at {time_of_day}. {speculation}"
+    - "{owner1} is considering dropping {roster_move_reason}. The fanbase is divided."
+    - "Multiple sources confirm {owner1} is rostering players they have never started. {speculation}"
+    - "{owner1}'s bench is {bench_state}. {reaction}"
+
+    # Team performance
+    - "{owner1}'s playoff hopes are {playoff_status}. {reaction}"
+    - "Power rankings have {owner1} at {ranking_position}. They're reportedly {reaction_emotion}."
+    - "{owner1} had a {performance_adj} week. {mock_quote}"
+    - "{owner1} beat {owner2} by {margin_type}. {trash_talk}"
+    - "{owner1} lost to {owner2} despite {despite_reason}. {condolence}"
+
+    # Wishful thinking / Predictions
+    - "{owner1} believes they're going to win the championship this year. {mock_response}"
+    - "Bold prediction: {owner1} will finish {prediction_outcome}. {justification}"
+    - "{owner1} is already planning their victory parade. {mock_response}"
+
+    # Regret and hindsight
+    - "{owner1} is STILL thinking about that trade they made last {timeframe}. {regret_detail}"
+    - "Sources say {owner1} cries themselves to sleep thinking about {regret_player_type}."
 
 # Fill-in tables
 trade_asset:

@@ -24,7 +24,7 @@ class TestRandomRumorTaskAutostarts:
 
         Previously `self.random_rumor_task.start()` was commented out in
         __init__ ("Disabled for now to avoid spam during testing"), so no
-        rumor ever posted without a manual /postrumor or DM.
+        rumor ever posted without a manual /randomrumor or DM.
         """
         assert rumors_cog.random_rumor_task.is_running()
 
@@ -62,9 +62,9 @@ class TestGenerateFromTables:
 
     async def test_fills_owner_and_player_placeholders(self, rumors_cog):
         rumors_cog.rumor_tables = {
-            "templates": [
-                "{owner1} wants to trade {player1} to {owner2} for {player2}"
-            ]
+            "templates": {
+                "general": ["{owner1} wants to trade {player1} to {owner2} for {player2}"]
+            }
         }
         owner_data = [
             {"name": "Alice", "team_name": "Team A", "players": ["Player One"]},
@@ -85,11 +85,30 @@ class TestGenerateFromTables:
         assert result == "a mysterious trade brewing in the league"
 
     async def test_handles_no_owner_data(self, rumors_cog):
-        rumors_cog.rumor_tables = {"templates": ["{owner1} is up to something"]}
+        rumors_cog.rumor_tables = {"templates": {"general": ["{owner1} is up to something"]}}
 
         result = await rumors_cog._generate_from_tables([])
 
         assert "An owner" in result
+
+    async def test_restricts_to_requested_category(self, rumors_cog):
+        rumors_cog.rumor_tables = {
+            "templates": {
+                "draft": ["draft template about {owner1}"],
+                "trade": ["trade template about {owner1}"],
+            }
+        }
+
+        result = await rumors_cog._generate_from_tables([], category="draft")
+
+        assert result == "draft template about An owner"
+
+    async def test_unknown_category_falls_back_to_full_mix(self, rumors_cog):
+        rumors_cog.rumor_tables = {"templates": {"draft": ["only template about {owner1}"]}}
+
+        result = await rumors_cog._generate_from_tables([], category="not-a-real-category")
+
+        assert result == "only template about An owner"
 
 
 class TestGetRandomReporter:
@@ -151,7 +170,7 @@ class TestAntiRepeat:
             first_name = next_name
 
     async def test_template_avoids_immediate_repeat(self, rumors_cog):
-        rumors_cog.rumor_tables = {"templates": ["Template A", "Template B"]}
+        rumors_cog.rumor_tables = {"templates": {"general": ["Template A", "Template B"]}}
 
         first = await rumors_cog._generate_from_tables([])
         second = await rumors_cog._generate_from_tables([])
@@ -238,10 +257,27 @@ class TestSeedExtras:
 
 
 class TestBuildRumorSeed:
-    """Coverage for the combined seed builder used by both auto-post and /postrumor."""
+    """Coverage for the combined seed builder used by both auto-post and /randomrumor."""
 
     async def test_returns_non_empty_seed_even_when_sleeper_unavailable(self, rumors_cog):
         seed = await rumors_cog._build_rumor_seed()
 
         assert seed
         assert isinstance(seed, str)
+
+    async def test_context_overrides_category_and_table_generation(self, rumors_cog):
+        seed = await rumors_cog._build_rumor_seed(category="draft", context="a very specific ask")
+
+        assert seed.startswith("a very specific ask")
+
+    async def test_category_scopes_seed_to_that_templates_bucket(self, rumors_cog):
+        rumors_cog.rumor_tables = {
+            "templates": {
+                "draft": ["draft-only seed about {owner1}"],
+                "trade": ["trade-only seed about {owner1}"],
+            }
+        }
+
+        for _ in range(5):
+            seed = await rumors_cog._build_rumor_seed(category="draft")
+            assert seed.startswith("draft-only seed about")
