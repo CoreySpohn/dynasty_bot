@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import random
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -32,6 +33,15 @@ logger = logging.getLogger("dynasty_bot.rumors")
 
 # Load reporters config
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "reporters.yaml"
+
+# Occasional delivery notes to break up the "press release" cadence, since
+# every rumor otherwise reads like a dramatic 2-4 sentence news report.
+STYLE_NOTES = [
+    "Keep this VERY casual - like a one-line text to the group chat. "
+    "Lowercase is fine, no dramatic buildup, one sentence.",
+    "Deliver this as a short, offhand comment someone would drop "
+    "mid-conversation, not a formal report.",
+]
 
 
 def load_reporters_config() -> dict:
@@ -206,7 +216,14 @@ class LeagueRumors(commands.Cog):
         
         # Cache for team names
         self._team_names: Optional[list[str]] = None
-        
+
+        # Recent picks, so back-to-back rumors don't repeat the same
+        # reporter/template, and recently posted rumors we can occasionally
+        # follow up on for continuity.
+        self._recent_reporter_names: deque[str] = deque(maxlen=2)
+        self._recent_templates: deque[str] = deque(maxlen=3)
+        self._recent_rumors: deque[tuple[str, str]] = deque(maxlen=3)
+
         # Start random rumor task
         self.random_rumor_task.start()
     
@@ -235,9 +252,12 @@ class LeagueRumors(commands.Cog):
         if not self.rumor_tables or not self.rumor_tables.get("templates"):
             return "a mysterious trade brewing in the league"
         
-        # Pick a random template
-        template = random.choice(self.rumor_tables["templates"])
-        
+        # Pick a random template, avoiding ones used in the last few generations
+        templates = self.rumor_tables["templates"]
+        candidates = [t for t in templates if t not in self._recent_templates]
+        template = random.choice(candidates or templates)
+        self._recent_templates.append(template)
+
         # Find all placeholders in the template
         import re
         placeholders = re.findall(r"\{(\w+)\}", template)
@@ -334,7 +354,135 @@ class LeagueRumors(commands.Cog):
         except Exception as e:
             logger.error(f"Failed to get owner data: {e}")
             return [{"name": m.name, "team_name": "", "players": []} for m in registry.members]
-    
+
+    async def _get_recent_matchup_highlight(self) -> Optional[str]:
+        """Look at last week's real matchup results for a rumor to riff on.
+
+        Grounding a rumor in an actual result (a nailbiter, a blowout) reads
+        far more like something a real league member would say than a fully
+        made-up topic.
+        """
+        registry = get_member_registry()
+
+        try:
+            nfl_state = await self.bot.sleeper.get_nfl_state()
+            week = (nfl_state.get("week") or 1) - 1
+            if week < 1:
+                return None
+
+            matchups = await self.bot.sleeper.get_matchups(self.league_id, week)
+            if not matchups:
+                return None
+
+            rosters = await self.bot.sleeper.get_rosters(self.league_id)
+            users = await self.bot.sleeper.get_users(self.league_id)
+
+            user_lookup = {u.get("user_id"): u for u in users}
+            roster_owner = {r.get("roster_id"): r.get("owner_id") for r in rosters}
+
+            def name_for(roster_id: int) -> str:
+                owner_id = roster_owner.get(roster_id)
+                member = registry.find_by_sleeper_id(owner_id)
+                if member:
+                    return member.name
+                return user_lookup.get(owner_id, {}).get("display_name", "someone")
+
+            by_matchup: dict[int, list[dict]] = {}
+            for m in matchups:
+                by_matchup.setdefault(m.get("matchup_id"), []).append(m)
+
+            results = []
+            for pair in by_matchup.values():
+                if len(pair) != 2:
+                    continue
+                team_a, team_b = pair
+                pts_a, pts_b = team_a.get("points") or 0, team_b.get("points") or 0
+                if not pts_a and not pts_b:
+                    continue  # week hasn't been scored yet
+                margin = abs(pts_a - pts_b)
+                if pts_a >= pts_b:
+                    winner, loser, win_pts, lose_pts = team_a, team_b, pts_a, pts_b
+                else:
+                    winner, loser, win_pts, lose_pts = team_b, team_a, pts_b, pts_a
+                results.append((margin, winner["roster_id"], loser["roster_id"], win_pts, lose_pts))
+
+            if not results:
+                return None
+
+            results.sort(key=lambda r: r[0])
+            closest = results[0]
+            blowout = results[-1]
+            margin, winner_id, loser_id, win_pts, lose_pts = random.choice([closest, blowout])
+
+            winner_name = name_for(winner_id)
+            loser_name = name_for(loser_id)
+
+            if margin <= 3:
+                descriptor = "narrowly beat"
+            elif margin >= 40:
+                descriptor = "demolished"
+            else:
+                descriptor = "beat"
+
+            return (
+                f"{winner_name} {descriptor} {loser_name} {win_pts:.1f} to {lose_pts:.1f} "
+                "last week (this is a REAL result, not a rumor - use it as the basis for one)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to get matchup highlight: {e}")
+            return None
+
+    def _maybe_get_style_note(self) -> str:
+        """Occasionally nudge delivery away from the default dramatic news-report cadence."""
+        if random.random() < 0.3:
+            return random.choice(STYLE_NOTES)
+        return ""
+
+    def _maybe_get_callback_note(self) -> str:
+        """Occasionally reference a recently posted rumor for continuity."""
+        if not self._recent_rumors or random.random() >= 0.25:
+            return ""
+        reporter_name, content = random.choice(self._recent_rumors)
+        return (
+            f'For context, here is a recent report from {reporter_name}: "{content}" '
+            "Only reference or follow up on it if it fits naturally - otherwise ignore it."
+        )
+
+    async def _build_rumor_seed(self) -> str:
+        """Build a topic/seed for AI rumor generation.
+
+        Mixes real events, table-generated scenarios grounded in actual
+        rosters, and canned topics so unprompted rumors are as specific and
+        varied as the ones /postrumor produces from tables alone.
+        """
+        candidates: list[tuple[str, int]] = []
+
+        real_event = await self._get_recent_matchup_highlight()
+        if real_event:
+            candidates.append((real_event, 2))
+
+        owner_data = await self._get_owner_data_for_rumors()
+        table_seed = await self._generate_from_tables(owner_data)
+        if table_seed:
+            candidates.append((table_seed, 3))
+
+        topics = self.config.get("random_topics", [])
+        if topics:
+            candidates.append((random.choice(topics), 2))
+
+        if not candidates:
+            return "league drama"
+
+        seed = random.choices(
+            [c[0] for c in candidates], weights=[c[1] for c in candidates], k=1
+        )[0]
+
+        for extra in (self._maybe_get_callback_note(), self._maybe_get_style_note()):
+            if extra:
+                seed = f"{seed}\n\n{extra}"
+
+        return seed
+
     def _get_ai_client(self):
         """Pick a random AI backend for this generation.
 
@@ -418,9 +566,8 @@ class LeagueRumors(commands.Cog):
                         member_players = roster_players[username.lower()]
                         break
                 
-                team = member.sleeper_team_names[0] if member.sleeper_team_names else "Unknown team"
                 players_str = ", ".join(member_players[:3]) if member_players else "Unknown roster"
-                lines.append(f"- {member.name} owns \"{team}\" with players like: {players_str}")
+                lines.append(f"- {member.name}'s roster includes: {players_str}")
             
             return "\n".join(lines)
             
@@ -438,13 +585,7 @@ class LeagueRumors(commands.Cog):
         lines = []
         
         for member in registry.members:
-            if member.sleeper_team_names:
-                team = member.sleeper_team_names[0]
-                lines.append(f"- {member.name} owns the team \"{team}\"")
-            elif member.sleeper_usernames:
-                lines.append(f"- {member.name} (Sleeper username: {member.sleeper_usernames[0]})")
-            else:
-                lines.append(f"- {member.name}")
+            lines.append(f"- {member.name}")
         
         return "\n".join(lines)
     
@@ -457,8 +598,11 @@ class LeagueRumors(commands.Cog):
         reporters = self.config.get("reporters", [])
         if not reporters:
             return ("Unknown Reporter", "Report the news professionally.", "📰")
-        
-        reporter = random.choice(reporters)
+
+        # Avoid picking the same reporter(s) as the last couple of generations
+        candidates = [r for r in reporters if r.get("name") not in self._recent_reporter_names]
+        reporter = random.choice(candidates or reporters)
+        self._recent_reporter_names.append(reporter.get("name", "Reporter"))
         return (
             reporter.get("name", "Reporter"),
             reporter.get("style", "Be professional."),
@@ -520,6 +664,7 @@ class LeagueRumors(commands.Cog):
         try:
             await channel.send(embed=embed)
             logger.info(f"Posted rumor as {reporter_name} to channel {target_channel_id}")
+            self._recent_rumors.append((reporter_name, content))
             return True
         except Exception as e:
             logger.error(f"Failed to post rumor: {e}")
@@ -588,19 +733,17 @@ class LeagueRumors(commands.Cog):
             logger.debug("Too early for random rumors")
             return
         
-        # Get random topic and reporter
-        topics = self.config.get("random_topics", [])
-        if not topics:
-            return
-        
-        topic = random.choice(topics)
         reporter_name, reporter_style, emoji = self._get_random_reporter()
         team_names = await self._get_team_names()
         member_context = await self._get_roster_context()
-        
+
         if not team_names:
             return
-        
+
+        # Mix real events, table-generated scenarios, and canned topics for
+        # a specific, varied seed - rather than always a vague generic topic.
+        topic = await self._build_rumor_seed()
+
         logger.info(f"Generating random rumor about: {topic}")
         
         try:
@@ -767,13 +910,11 @@ class LeagueRumors(commands.Cog):
     ) -> None:
         """Admin command to force a random rumor post using table-based generation."""
         await interaction.response.defer(ephemeral=True)
-        
-        # Get owner data with roster players from Sleeper
-        owner_data = await self._get_owner_data_for_rumors()
-        
-        # Generate a specific rumor from tables (with real player names!)
-        rumor_seed = await self._generate_from_tables(owner_data)
-        
+
+        # Same seed mix (real events, table-generated scenarios, canned
+        # topics) the auto-post loop uses.
+        rumor_seed = await self._build_rumor_seed()
+
         # Pick a random reporter
         reporter_name, reporter_style, emoji = self._get_random_reporter()
         member_context = await self._get_roster_context()

@@ -74,6 +74,18 @@ templates:
   - "Sources say {owner1} cries themselves to sleep thinking about {regret_player_type}."
   - "{owner1} could have had {draft_target_type} but passed. {reaction}"
 
+  # Absurd trade negotiations
+  - "{owner1} offered {owner2} {lowball_offer} for {player1}. {owner2} is still laughing."
+  - "Sources say {owner1} wants {overreach_ask} for a bench-warmer. The league thinks they've lost it."
+  - "{owner1}'s trade demands have gotten so absurd that {owner2} reportedly muted the group chat."
+  - "{owner1} tried to lowball {owner2} for {player1} and got publicly clowned for it."
+
+  # Pure shit talk
+  - "{owner1} called {owner2}'s roster \"{roast}\" in the group chat. It got personal fast."
+  - "The group chat roasted {owner1} over {controversial_move}. {reaction}"
+  - "{owner1} has been trash talking non-stop despite {despite_reason}. {owner2} has had enough."
+  - "{owner1} thinks they're the best trash talker in the league. {mock_response}"
+
 # Fill-in tables
 trade_asset:
   - "their first-round pick"
@@ -321,3 +333,29 @@ regret_player_type:
   - "the draft pick they passed on"
   - "the waiver claim they missed"
   - "their former players balling out elsewhere"
+
+lowball_offer:
+  - "a conditional 7th-round pick"
+  - "'good vibes'"
+  - "a player they cut in Week 2"
+  - "future considerations (translation: nothing)"
+  - "an IOU"
+  - "a heartfelt apology"
+  - "a bag of chips"
+
+overreach_ask:
+  - "two firsts and a kidney"
+  - "their entire starting lineup"
+  - "a first, a player, AND cash"
+  - "next three years of first-round picks"
+  - "their QB1 plus 'a little something extra'"
+  - "a player they haven't even started this year"
+
+roast:
+  - "held together with waiver wire scraps"
+  - "a cautionary tale"
+  - "a fire sale waiting to happen"
+  - "a museum exhibit titled 'What Not To Do'"
+  - "a rebuild with no end in sight"
+  - "one bad week from total collapse"
+  - "a bye week disguised as a roster"
