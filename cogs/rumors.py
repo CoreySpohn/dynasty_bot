@@ -264,11 +264,12 @@ class LeagueRumors(commands.Cog):
         self._team_names: Optional[list[str]] = None
 
         # Recent picks, so back-to-back rumors don't repeat the same
-        # reporter/template, and recently posted rumors we can occasionally
-        # follow up on for continuity.
+        # reporter/template/owner, and recently posted rumors we can
+        # occasionally follow up on for continuity.
         self._recent_reporter_names: deque[str] = deque(maxlen=2)
         self._recent_templates: deque[str] = deque(maxlen=3)
         self._recent_rumors: deque[tuple[str, str]] = deque(maxlen=3)
+        self._recent_owner_names: deque[str] = deque(maxlen=4)
 
         # Start random rumor task
         self.random_rumor_task.start()
@@ -332,15 +333,25 @@ class LeagueRumors(commands.Cog):
         for placeholder in placeholders:
             if placeholder == "owner1":
                 if owner_data:
-                    owner1_data = random.choice(owner_data)
+                    # Avoid picking an owner featured in the last couple of
+                    # generations, same anti-repeat treatment as reporters/templates.
+                    candidates = [o for o in owner_data if o["name"] not in self._recent_owner_names]
+                    owner1_data = random.choice(candidates or owner_data)
                     replacements["owner1"] = owner1_data["name"]
+                    self._recent_owner_names.append(owner1_data["name"])
                 else:
                     replacements["owner1"] = "An owner"
             elif placeholder == "owner2":
-                available = [o for o in owner_data if o != owner1_data]
+                available = [
+                    o for o in owner_data
+                    if o != owner1_data and o["name"] not in self._recent_owner_names
+                ]
+                if not available:
+                    available = [o for o in owner_data if o != owner1_data]
                 if available:
                     owner2_data = random.choice(available)
                     replacements["owner2"] = owner2_data["name"]
+                    self._recent_owner_names.append(owner2_data["name"])
                 else:
                     replacements["owner2"] = "another owner"
             elif placeholder == "player1":

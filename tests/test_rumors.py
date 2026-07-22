@@ -297,6 +297,23 @@ class TestAntiRepeat:
 
         assert first != second
 
+    async def test_owner_avoids_immediate_repeat(self, rumors_cog):
+        rumors_cog.rumor_tables = {"templates": {"general": ["{owner1} is up to something"]}}
+        # More owners than the recency deque holds, so exclusion never has
+        # to fall back to the full (repeat-eligible) pool mid-test.
+        owner_data = [
+            {"name": name, "team_name": f"Team {name}", "players": []}
+            for name in ["Alice", "Bob", "Carol", "Dave", "Erin", "Frank"]
+        ]
+
+        _, first_subject = await rumors_cog._generate_from_tables(owner_data)
+        first_name = first_subject["owner"]["name"]
+        for _ in range(10):
+            _, subject = await rumors_cog._generate_from_tables(owner_data)
+            next_name = subject["owner"]["name"]
+            assert next_name != first_name
+            first_name = next_name
+
 
 class TestRecentMatchupHighlight:
     """Coverage for grounding rumors in real matchup results."""
