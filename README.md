@@ -128,6 +128,19 @@ Trade polls are automatically created from Sleeper trades.
 
 ---
 
+### 🏷️ Nickname Tags
+
+Tags owner nicknames with league context (e.g. `Corey [3rd place]`) without touching whatever nickname they already have. Standings rank syncs automatically once a day during the season; live "on the clock" tracking polls Sleeper every 5 minutes whenever an actual draft is in progress.
+
+**Admin Commands:**
+| Command | Description |
+|---------|-------------|
+| `/syncstandingsnicknames` | Manually tag every owner with their current standings rank |
+| `/syncdraftnicknames` | Tag every owner with their rookie draft pick slot (e.g. `Pick 3`) |
+| `/clearnicknametags` | Remove all bot-applied nickname tags |
+
+---
+
 ## Configuration Files
 
 | File | Purpose |

@@ -8,7 +8,7 @@ slash command.
 import logging
 import random
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import discord
 import yaml
@@ -124,6 +124,17 @@ class RandomResponses(commands.Cog):
 #   - text: "The response text"
 #     chance: 1000  # 1 in 1000 chance (0.1%)
 #     added_by: "username"  # Who added this response
+#     type: ambient  # optional, defaults to "ambient" - fires on any message
+#
+# Other types:
+#   type: standings
+#     text can use "{rank}" (e.g. "big talk from a guy in {rank} place").
+#     Resolved against the message author's current Sleeper standing;
+#     silently skipped if they aren't a known league member.
+#   type: callback
+#     Instead of replying to the triggering message, replies to a random
+#     earlier message from the same author in the channel (the "this you?"
+#     mechanic). Silently skipped if no earlier message is found.
 
 """
         with open(RESPONSES_PATH, 'w') as f:
@@ -144,27 +155,99 @@ class RandomResponses(commands.Cog):
         # Check for targeted responses (Kohl's Cash punishments - secret!)
         await self._check_targeted_responses(message)
         
-        # Roll ALL responses first to be fair (not order-dependent)
+        # Roll ALL responses first to be fair (not order-dependent).
+        # This is just the dice roll - no async work - so trying a response
+        # that turns out to be unsendable (e.g. no standings match) doesn't
+        # cost the others a shot at firing this message.
         triggered = []
         for response in self.responses:
             chance = response.get('chance', 1000)
             text = response.get('text', '')
-            
+
             if not text:
                 continue
-            
+
             # Roll the dice - 1 in {chance} probability
             if random.randint(1, chance) == 1:
-                triggered.append((text, chance))
-        
+                triggered.append(response)
+
         # If any triggered, randomly pick one to send
         if triggered:
-            text, chance = random.choice(triggered)
-            try:
+            await self._send_response(message, random.choice(triggered))
+
+    async def _send_response(self, message: discord.Message, response: dict) -> None:
+        """Dispatch a triggered response based on its type."""
+        response_type = response.get('type', 'ambient')
+        text = response['text']
+        chance = response.get('chance', 1000)
+
+        try:
+            if response_type == 'standings':
+                await self._send_standings_response(message, text, chance)
+            elif response_type == 'callback':
+                await self._send_callback_response(message, text, chance)
+            else:
                 await message.reply(text, mention_author=False)
-                logger.info(f"Random response triggered: '{text[:30]}...' (1/{chance} chance, {len(triggered)} hit)")
-            except discord.HTTPException as e:
-                logger.error(f"Failed to send random response: {e}")
+                logger.info(f"Random response triggered: '{text[:30]}...' (1/{chance} chance)")
+        except discord.HTTPException as e:
+            logger.error(f"Failed to send random response: {e}")
+
+    async def _send_standings_response(self, message: discord.Message, text: str, chance: int) -> None:
+        """Send a response templated with the author's current standings rank.
+
+        The template uses `{rank}` (e.g. "big talk from a guy in {rank} place").
+        Silently skips if the author isn't a known league member or standings
+        can't be resolved - a broken template is worse than not firing.
+        """
+        from lib.standings import get_rank_for_discord_id, ordinal
+
+        try:
+            rank = await get_rank_for_discord_id(self.bot.sleeper, self.bot.league_id, message.author.id)
+        except Exception as e:
+            logger.warning(f"Couldn't resolve standings rank for response: {e}")
+            return
+
+        if rank is None:
+            return
+
+        filled = text.format(rank=ordinal(rank))
+        await message.reply(filled, mention_author=False)
+        logger.info(f"Standings response triggered: '{filled[:30]}...' (1/{chance} chance)")
+
+    async def _send_callback_response(self, message: discord.Message, text: str, chance: int) -> None:
+        """Reply to one of the author's own earlier messages instead of the current one.
+
+        This is the "this you?" mechanic - it calls back to something the
+        same person said earlier in the channel rather than firing on
+        whatever unrelated message happened to win the dice roll.
+        """
+        target = await self._find_past_message(message)
+        if target is None:
+            return
+
+        await target.reply(text, mention_author=False)
+        logger.info(f"Callback response triggered on {message.author}'s earlier message (1/{chance} chance)")
+
+    async def _find_past_message(
+        self, message: discord.Message, search_limit: int = 200
+    ) -> Optional[discord.Message]:
+        """Find a random earlier message from the same author in this channel."""
+        candidates = []
+        try:
+            async for past in message.channel.history(limit=search_limit, before=message):
+                if past.author.id != message.author.id:
+                    continue
+                if not past.content.strip():
+                    continue
+                candidates.append(past)
+        except discord.HTTPException as e:
+            logger.warning(f"Couldn't search channel history for callback response: {e}")
+            return None
+
+        if not candidates:
+            return None
+
+        return random.choice(candidates)
     
     async def _check_targeted_responses(self, message: discord.Message) -> None:
         """Check for secret targeted responses from Kohl's Cash punishments."""

@@ -20,6 +20,7 @@ from cogs.trade_values import get_team_dynasty_values
 from config import SLEEPER_LEAGUE_ID
 from database import db
 from lib.plotting import render_power_rankings
+from lib.standings import compute_standings
 
 if TYPE_CHECKING:
     from main import DynastyBot
@@ -372,54 +373,25 @@ class Analytics(commands.Cog):
         await interaction.response.defer()
         
         try:
-            rosters = await self.bot.sleeper.get_rosters(self.league_id)
-            users_list = await self.bot.sleeper.get_users(self.league_id)
             league = await self.bot.sleeper.get_league(self.league_id)
-            
-            # Build user lookup
-            users = {u["user_id"]: u.get("display_name", "Unknown") for u in users_list}
-            
-            # Build standings data
-            standings = []
-            for roster in rosters:
-                owner_id = roster.get("owner_id", "")
-                owner_name = users.get(owner_id, f"Team {roster['roster_id']}")
-                
-                settings = roster.get("settings", {})
-                wins = settings.get("wins", 0)
-                losses = settings.get("losses", 0)
-                ties = settings.get("ties", 0)
-                points_for = settings.get("fpts", 0) + settings.get("fpts_decimal", 0) / 100
-                points_against = settings.get("fpts_against", 0) + settings.get("fpts_against_decimal", 0) / 100
-                
-                standings.append({
-                    "owner": owner_name,
-                    "wins": wins,
-                    "losses": losses,
-                    "ties": ties,
-                    "pf": points_for,
-                    "pa": points_against,
-                })
-            
-            # Sort by wins, then points for
-            standings.sort(key=lambda x: (x["wins"], x["pf"]), reverse=True)
-            
+            standings = await compute_standings(self.bot.sleeper, self.league_id)
+
             # Build embed
             embed = discord.Embed(
                 title="📊 League Standings",
                 color=discord.Color.blue(),
             )
-            
+
             standings_text = "```\n"
             standings_text += f"{'#':<3} {'Team':<18} {'Record':<10} {'PF':>8}\n"
             standings_text += "-" * 42 + "\n"
-            
-            for idx, team in enumerate(standings, 1):
-                record = f"{team['wins']}-{team['losses']}"
-                if team["ties"]:
-                    record += f"-{team['ties']}"
-                standings_text += f"{idx:<3} {team['owner'][:17]:<18} {record:<10} {team['pf']:>8.1f}\n"
-            
+
+            for team in standings:
+                record = f"{team.wins}-{team.losses}"
+                if team.ties:
+                    record += f"-{team.ties}"
+                standings_text += f"{team.rank:<3} {team.owner[:17]:<18} {record:<10} {team.pf:>8.1f}\n"
+
             standings_text += "```"
             embed.description = standings_text
             

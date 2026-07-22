@@ -5,6 +5,17 @@
 #   - text: "The response text"
 #     chance: 1000  # 1 in 1000 chance (0.1%)
 #     added_by: "username"  # Who added this response
+#     type: ambient  # optional, defaults to "ambient" - fires on any message
+#
+# Other types:
+#   type: standings
+#     text can use "{rank}" (e.g. "big talk from a guy in {rank} place").
+#     Resolved against the message author's current Sleeper standing;
+#     silently skipped if they aren't a known league member.
+#   type: callback
+#     Instead of replying to the triggering message, replies to a random
+#     earlier message from the same author in the channel (the "this you?"
+#     mechanic). Silently skipped if no earlier message is found.
 
 responses:
 - added_by: Corey
@@ -22,3 +33,20 @@ responses:
 - added_by: Corey
   chance: 1000
   text: you sure about that?
+- added_by: Corey
+  chance: 1000
+  text: I guess they just let anyone into this league don't they
+- added_by: Corey
+  chance: 1000
+  text: Sick reference bro! Your references are off the charts, everyone knows that. lmao
+- added_by: Corey
+  chance: 1000
+  text: this smells like tanking and I will be filing a report
+- added_by: Corey
+  chance: 500
+  text: big talk from a guy in {rank} place
+  type: standings
+- added_by: Corey
+  chance: 500
+  text: this you?
+  type: callback

@@ -313,6 +313,20 @@ class Database:
             ON ktc_values(player_name, recorded_date)
         """)
 
+        # Bot-applied nickname tags (standings rank, draft slot, on-the-clock).
+        # base_nickname is tracked here rather than parsed back out of the
+        # live Discord nickname, since a member can rename themselves at any
+        # time and that should become the new base going forward.
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS nickname_tags (
+                discord_id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                base_nickname TEXT,
+                tag TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         await self.connection.commit()
 
 
