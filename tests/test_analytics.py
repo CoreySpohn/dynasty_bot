@@ -2,7 +2,11 @@
 
 import pytest
 
-from cogs.analytics import calculate_optimal_lineup, FLEX_POSITIONS
+from cogs.analytics import (
+    calculate_optimal_lineup,
+    generate_power_rankings_sync,
+    FLEX_POSITIONS,
+)
 
 
 class TestCalculateOptimalLineup:
@@ -138,3 +142,59 @@ class TestFlexPositions:
         assert "WR" in FLEX_POSITIONS["REC_FLEX"]
         assert "TE" in FLEX_POSITIONS["REC_FLEX"]
         assert "RB" not in FLEX_POSITIONS["REC_FLEX"]
+
+
+class TestGeneratePowerRankingsSyncDynastyBlend:
+    """Test suite for the dynasty value component of the Power Level score."""
+
+    def _base_args(self):
+        rosters = [{"roster_id": 1, "owner_id": "u1"}]
+        matchups_by_week = {
+            1: [
+                {
+                    "roster_id": 1,
+                    "matchup_id": 100,
+                    "points": 120.0,
+                    "players_points": {"p1": 20.0, "p2": 15.0},
+                },
+                {
+                    "roster_id": 2,
+                    "matchup_id": 100,
+                    "points": 100.0,
+                    "players_points": {},
+                },
+            ]
+        }
+        users = {"u1": "Team One"}
+        players = {"p1": {"position": "QB"}, "p2": {"position": "RB"}}
+        roster_positions = ["QB", "RB", "BN"]
+        return rosters, matchups_by_week, users, players, roster_positions
+
+    def test_dynasty_value_increases_power_level_by_weighted_amount(self):
+        args = self._base_args()
+
+        without = generate_power_rankings_sync(*args, current_week=1, season=2026)
+        with_dynasty = generate_power_rankings_sync(
+            *args, current_week=1, season=2026, dynasty_values={1: 50000}
+        )
+
+        # Weight is 15%, scaled by /1000: (50000 / 1000) * 0.15 == 7.5
+        delta = with_dynasty.loc[0, "Power Level"] - without.loc[0, "Power Level"]
+        assert round(delta, 1) == 7.5
+        assert with_dynasty.loc[0, "Dynasty Value"] == 50000
+
+    def test_missing_dynasty_values_defaults_to_zero(self):
+        args = self._base_args()
+
+        df = generate_power_rankings_sync(*args, current_week=1, season=2026)
+
+        assert df.loc[0, "Dynasty Value"] == 0
+
+    def test_unmatched_roster_id_contributes_zero(self):
+        args = self._base_args()
+
+        df = generate_power_rankings_sync(
+            *args, current_week=1, season=2026, dynasty_values={999: 50000}
+        )
+
+        assert df.loc[0, "Dynasty Value"] == 0

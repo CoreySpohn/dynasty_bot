@@ -86,11 +86,14 @@ uv run python main.py
 
 ### 💰 Trade Values
 
-Dynasty trade values are synced daily from KeepTradeCut and stored historically so trends can be tracked over time.
+Dynasty trade values are synced daily from KeepTradeCut and stored historically so trends can be tracked over time. Team dynasty value also factors into `/rankings` (see Analytics above).
 
 | Command | Description |
 |---------|-------------|
 | `/tradevalue <player>` | Look up a player's current 1QB/Superflex value, rank, and 7-day trend |
+| `/teamvalues` | Rank owners by total dynasty roster value |
+| `/valuemovers` | Winners & losers: biggest team value swings over the last 7 days |
+| `/tradecalc <side_a> <side_b>` | Compare KTC value of two sides of a proposed trade (players only, comma-separated) |
 
 **Admin Commands:**
 | Command | Description |

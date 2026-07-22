@@ -114,10 +114,18 @@ Notify when specific players are dropped to waivers.
 
 ### Trade Calculator Integration
 KeepTradeCut dynasty values are now synced daily and tracked historically
-(`/tradevalue`, `/synctradevalues`, `ktc_values` table). Still open: a
-`/tradecalc` command that sums proposed players/picks on each side of a
-trade and calls it fair/lopsided, plus a second source (FantasyCalc) for
-cross-checking.
+(`ktc_values` table), with `/tradevalue`, `/teamvalues`, `/valuemovers`
+(weekly value winners/losers), and `/tradecalc` (sums KTC value on each
+side of a proposed trade) all live. Team dynasty value also now feeds
+into the `/rankings` Power Level formula (15% weight). Still open:
+`/tradecalc` only accepts players by name, not draft picks; and a second
+source (FantasyCalc) for cross-checking values.
+
+### Rumor Flavor from Team Value Trends
+Pass team dynasty value / trend data into the rumor generator (`cogs/rumors.py`)
+as context so reporters can reference it (e.g. "Team X's dynasty stock is
+cratering"). Deliberately deferred from the KTC tracking work above since it
+needs its own prompt/persona design pass.
 
 ### Draft Recap
 Auto-generate draft grades and hot takes after rookie drafts.

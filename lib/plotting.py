@@ -191,8 +191,14 @@ def render_power_rankings(
         display_df = rankings_df.drop(columns=["Owner"])
     else:
         row_labels = None
-        display_df = rankings_df
-    
+        display_df = rankings_df.copy()
+
+    # Compact "50.2k" style formatting for the (large) dynasty value column
+    if "Dynasty Value" in display_df.columns:
+        display_df["Dynasty Value"] = display_df["Dynasty Value"].apply(
+            lambda v: f"{v / 1000:.1f}k"
+        )
+
     # Shorten column names for display
     column_renames = {
         "Power Level": "Pwr Lvl",
@@ -200,6 +206,7 @@ def render_power_rankings(
         "Points For": "PF",
         "Points Against": "PA",
         "Average Points": "Avg Pts",
+        "Dynasty Value": "Dynasty",
         "Record": "Rec",
         "Win %": "Win%",
     }

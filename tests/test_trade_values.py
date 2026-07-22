@@ -6,7 +6,12 @@ import pytest
 import pytest_asyncio
 
 import cogs.trade_values as trade_values_module
-from cogs.trade_values import TradeValues, normalize_name
+from cogs.trade_values import (
+    TradeValues,
+    get_team_dynasty_value_trends,
+    get_team_dynasty_values,
+    normalize_name,
+)
 from database import Database
 
 
@@ -93,3 +98,59 @@ class TestGetLatestValueAndTrend:
     async def test_returns_none_for_unknown_player(self, trade_values_cog, test_db):
         row = await trade_values_cog._get_latest_value("totally unknown player xyz")
         assert row is None
+
+
+async def _insert_snapshot(
+    test_db, ktc_id, sleeper_id, name, value_sf, recorded_date
+):
+    async with test_db.execute(
+        """
+        INSERT INTO ktc_values (
+            ktc_id, sleeper_id, player_name, position, team, is_rookie,
+            value_1qb, rank_1qb, positional_rank_1qb,
+            value_sf, rank_sf, positional_rank_sf, recorded_date
+        ) VALUES (?, ?, ?, 'WR', 'CIN', 0, ?, 1, 1, ?, 1, 1, ?)
+        """,
+        (ktc_id, sleeper_id, name, value_sf, value_sf, recorded_date),
+    ):
+        pass
+
+
+class TestTeamDynastyValues:
+    async def test_sums_current_roster_value_ignoring_unmatched_players(self, test_db):
+        await _insert_snapshot(test_db, 1, "p1", "Player One", 5000, "2026-07-22")
+        await _insert_snapshot(test_db, 2, "p2", "Player Two", 3000, "2026-07-22")
+
+        rosters = [{"roster_id": 1, "players": ["p1", "p2", "p_unmatched"]}]
+        values = await get_team_dynasty_values(rosters)
+
+        assert values[1] == 8000
+
+    async def test_missing_roster_gets_zero(self, test_db):
+        rosters = [{"roster_id": 99, "players": []}]
+        values = await get_team_dynasty_values(rosters)
+
+        assert values[99] == 0
+
+
+class TestTeamDynastyValueTrends:
+    async def test_isolates_market_movement_from_roster_churn(self, test_db):
+        # Same player, currently owned both times: value rose from 4000 to 5000.
+        await _insert_snapshot(test_db, 1, "p1", "Player One", 4000, "2026-07-15")
+        await _insert_snapshot(test_db, 1, "p1", "Player One", 5000, "2026-07-22")
+
+        rosters = [{"roster_id": 1, "players": ["p1"]}]
+        trends = await get_team_dynasty_value_trends(rosters)
+
+        current, prior = trends[1]
+        assert current == 5000
+        assert prior == 4000
+
+    async def test_falls_back_to_current_value_when_no_history(self, test_db):
+        await _insert_snapshot(test_db, 1, "p1", "Player One", 5000, "2026-07-22")
+
+        rosters = [{"roster_id": 1, "players": ["p1"]}]
+        trends = await get_team_dynasty_value_trends(rosters)
+
+        current, prior = trends[1]
+        assert current == prior == 5000

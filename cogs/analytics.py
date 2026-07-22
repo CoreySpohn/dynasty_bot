@@ -16,6 +16,7 @@ import pandas as pd
 from discord import app_commands
 from discord.ext import commands
 
+from cogs.trade_values import get_team_dynasty_values
 from config import SLEEPER_LEAGUE_ID
 from database import db
 from lib.plotting import render_power_rankings
@@ -90,15 +91,17 @@ def generate_power_rankings_sync(
     roster_positions: list[str],
     current_week: int,
     season: int,
+    dynasty_values: Optional[dict[int, int]] = None,
 ) -> pd.DataFrame:
     """Generate power rankings DataFrame (blocking, runs in executor).
-    
+
     Calculates various metrics for each team:
     - Max Potential Points (optimal lineup each week)
     - Points For / Against
     - Record and Win %
+    - Dynasty roster value (KeepTradeCut, Superflex)
     - Power Level score
-    
+
     Args:
         rosters: List of roster dicts from Sleeper API.
         matchups_by_week: Dict mapping week number to list of matchups.
@@ -107,10 +110,14 @@ def generate_power_rankings_sync(
         roster_positions: League roster positions.
         current_week: Current NFL week.
         season: Current season year.
-        
+        dynasty_values: Dict mapping roster_id to total KTC superflex roster
+            value. Teams missing from this dict (e.g. no sync has run yet)
+            contribute 0 to their Power Level.
+
     Returns:
         DataFrame with power rankings data, sorted by Power Level.
     """
+    dynasty_values = dynasty_values or {}
     rankings_data = []
     
     # Build roster lookup
@@ -185,20 +192,26 @@ def generate_power_rankings_sync(
         win_pct = (wins / games_played * 100) if games_played > 0 else 0
         avg_points = total_points_for / current_week if current_week > 0 else 0
         
+        dynasty_value = dynasty_values.get(roster_id, 0)
+
         # Calculate power level (weighted score)
-        # Weights: Potential Points (40%), Win% (30%), Avg Points (30%)
+        # Weights: Potential Points (35%), Win% (25%), Avg Points (25%),
+        # Dynasty Value (15%) - roster's KTC superflex value, scaled down
+        # to be comparable in magnitude to the performance-based terms.
         power_level = (
-            (total_potential / 100) * 0.4
-            + win_pct * 0.3
-            + avg_points * 0.3
+            (total_potential / 100) * 0.35
+            + win_pct * 0.25
+            + avg_points * 0.25
+            + (dynasty_value / 1000) * 0.15
         )
-        
+
         rankings_data.append({
             "Owner": owner_name,
             "Power Level": round(power_level, 1),
             "Potential Points": round(total_potential, 1),
             "Points For": round(total_points_for, 1),
             "Average Points": round(avg_points, 1),
+            "Dynasty Value": dynasty_value,
             "Record": f"{wins}-{losses}",
             "Win %": f"{win_pct:.0f}%",
         })
@@ -262,10 +275,13 @@ class Analytics(commands.Cog):
                 matchups_by_week[week] = await self.bot.sleeper.get_matchups(
                     self.league_id, week
                 )
-            
+
+            # Dynasty roster value (KeepTradeCut) feeds into the Power Level score
+            dynasty_values = await get_team_dynasty_values(rosters)
+
             # Run heavy calculation in thread pool to avoid blocking
             logger.info("Calculating power rankings (in executor)...")
-            
+
             loop = asyncio.get_event_loop()
             rankings_df = await loop.run_in_executor(
                 _executor,
@@ -278,6 +294,7 @@ class Analytics(commands.Cog):
                     roster_positions,
                     current_week,
                     season,
+                    dynasty_values,
                 ),
             )
             
@@ -297,7 +314,8 @@ class Analytics(commands.Cog):
                 description=(
                     f"**Week {current_week}** • {season} Season\n\n"
                     "Rankings based on Max Potential Points (optimal lineup each week), "
-                    "win percentage, and average points scored."
+                    "win percentage, average points scored, and dynasty roster value "
+                    "(KeepTradeCut)."
                 ),
                 color=discord.Color.gold(),
             )
