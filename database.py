@@ -391,6 +391,49 @@ class Database:
             ON roster_snapshots(player_id, recorded_date)
         """)
 
+        # Migration: which slot a player occupied (active / taxi / reserve).
+        # Without this, snapshots record only *that* someone was rostered,
+        # which can't distinguish a taxi player from an activated one - and
+        # the league's "once activated, never back on taxi" rule needs
+        # exactly that. NULL means a snapshot taken before slot tracking
+        # existed, which must not be read as "was active".
+        try:
+            await self.connection.execute("""
+                ALTER TABLE roster_snapshots ADD COLUMN slot TEXT
+            """)
+            logger.info("Added 'slot' column to roster_snapshots")
+        except Exception:
+            pass  # Column already exists
+
+        # Taxi squad activations, and how each player was acquired.
+        #
+        # The single thing about the taxi rules that Sleeper can never tell
+        # us after the fact. Draft origin is permanently recoverable from the
+        # draft endpoints, and trades from transactions, but Sleeper serves
+        # only the *current* roster - so once a player is activated off taxi,
+        # nothing upstream remembers they were ever on it. Observed
+        # activations therefore have to be written down and kept.
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS taxi_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id TEXT NOT NULL,
+                player_id TEXT NOT NULL,
+                acquisition TEXT,
+                draft_season INTEGER,
+                draft_round INTEGER,
+                activated_season INTEGER,
+                activated_date TEXT,
+                notes TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner_id, player_id)
+            )
+        """)
+        await self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_taxi_ledger_player
+            ON taxi_ledger(player_id)
+        """)
+
         # Bot-applied nickname tags (standings rank, draft slot, on-the-clock).
         # base_nickname is tracked here rather than parsed back out of the
         # live Discord nickname, since a member can rename themselves at any

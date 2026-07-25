@@ -69,6 +69,30 @@ Hourly-with-low-odds rather than one coarse timer, deliberately: a `tasks.loop(h
 | `/raid <player_name>` | Raid a player from someone's taxi |
 | `/raidhistory [season]` | View raid history |
 | `/taxisquad [team]` | View taxi squads |
+| `/taxiaudit [season]` | Check every taxi squad against **league** rules, not Sleeper's |
+| `/taxieligible [team]` | Who could still legally be moved onto a taxi slot |
+
+**Admin:** `/taxibackfill` seeds the ledger from draft history — run this once before trusting the two commands above.
+
+#### Why the bot has to track this itself
+
+Sleeper allows any player inside their first three years onto a taxi slot. League rules (`docs/Superflexers Rules.md`) are much narrower, and Sleeper implements none of it:
+
+1. Only **rookies you drafted yourself** are eligible.
+2. **Once activated, a player can never go back on taxi.**
+3. A player **received in a trade** can never be placed on taxi — even if the previous owner had them on theirs.
+4. After **3 seasons** they must be activated or dropped.
+5. 5 slots per team.
+
+`lib/taxi_rules.py` holds the rule engine. Note which inputs are derived and which are stored:
+
+- **Draft origin is permanently recoverable** from the draft endpoints across the `previous_league_id` chain — verified against all 46 current taxi players with zero gaps, so this is derived, not stored.
+- **Trades are recoverable** from transactions.
+- **Activation history is not.** Sleeper serves only the *current* roster, so once a player is activated off taxi nothing upstream remembers they were ever on it. That's why `roster_snapshots` now records which **slot** each player occupies, and why observed activations are written to `taxi_ledger` permanently.
+
+Because an activation doesn't change *who* is rostered, the snapshot's skip-if-unchanged logic compares slots as well as composition — otherwise the one event these rules depend on would be silently dropped.
+
+**The backfill is conservative by design.** Activations before tracking began are unrecoverable, so any own-draftee currently on the *active* roster is recorded as already activated. Under league rules they couldn't return to taxi anyway, so this never wrongly re-opens a slot. Before backfilling, both commands warn that they're working from incomplete data — otherwise 70 players look eligible when the true answer is 0.
 
 **How it works:**
 - Cost = Draft round + (round - 1) in picks

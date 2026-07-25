@@ -16,6 +16,16 @@ from discord.ext import commands, tasks
 from config import ALERT_CHANNEL_ID, SLEEPER_LEAGUE_ID
 from database import db
 from lib.members import get_member_registry
+from lib.results import get_league_chain
+from lib.taxi_rules import (
+    TAXI_MAX_SEASONS,
+    Acquisition,
+    audit,
+    build_draft_index,
+    build_records,
+    eligible_additions,
+    over_slot_limit,
+)
 
 if TYPE_CHECKING:
     from main import DynastyBot
@@ -513,6 +523,318 @@ class TaxiRaiding(commands.Cog):
             logger.error(f"Raid history failed: {e}", exc_info=True)
             await interaction.followup.send(f"❌ Error fetching raid history: {e}")
     
+    # =====================================================================
+    # League taxi rules (Sleeper does not enforce these)
+    # =====================================================================
+
+    async def _draft_index(self) -> dict:
+        """Every drafted player, indexed to their earliest draft.
+
+        Walks the whole `previous_league_id` chain. Sleeper retains drafts
+        permanently, so this is derived rather than stored.
+        """
+        chain = await get_league_chain(self.bot.sleeper, self.league_id)
+        picks_by_league = []
+        for league in chain:
+            season = int(league.get("season") or 0)
+            for draft in await self.bot.sleeper.get_drafts(league["league_id"]):
+                picks = await self.bot.sleeper.get_picks_in_draft(draft["draft_id"])
+                picks_by_league.append((season, picks))
+        return build_draft_index(picks_by_league)
+
+    async def _ledger(self) -> tuple[set, dict]:
+        """Recorded acquisitions and activations from taxi_ledger.
+
+        Returns:
+            (traded_for pairs, {(owner_id, player_id): activated_season}).
+        """
+        traded_for: set[tuple[Optional[str], str]] = set()
+        activated: dict[tuple[Optional[str], str], int] = {}
+
+        async with db.execute(
+            "SELECT owner_id, player_id, acquisition, activated_season "
+            "FROM taxi_ledger"
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        for owner_id, player_id, acquisition, activated_season in rows:
+            if acquisition == Acquisition.TRADE.value:
+                traded_for.add((owner_id, player_id))
+            if activated_season is not None:
+                activated[(owner_id, player_id)] = activated_season
+        return traded_for, activated
+
+    async def _ledger_size(self) -> int:
+        async with db.execute("SELECT COUNT(*) FROM taxi_ledger") as cursor:
+            row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    # Shown whenever the ledger hasn't been seeded. Without recorded
+    # activations, every own-draftee sitting on the active roster looks
+    # taxi-eligible - which reads as 70 eligible players when the real answer
+    # is zero. Better to say so than to quietly present the wrong number.
+    UNSEEDED_WARNING = (
+        "⚠️ The taxi ledger is empty, so no activations are on record. "
+        "Anyone an owner drafted looks eligible even if they've been starting "
+        "for two years. Run `/taxibackfill` first."
+    )
+
+    async def _taxi_context(self) -> dict:
+        """Assemble everything the rule engine needs."""
+        league = await self.bot.sleeper.get_league(self.league_id)
+        rosters = await self.bot.sleeper.get_rosters(self.league_id)
+        users = await self.bot.sleeper.get_users(self.league_id)
+        players = await self.bot.sleeper.get_all_players()
+
+        draft_index = await self._draft_index()
+        traded_for, activated = await self._ledger()
+
+        return {
+            "league": league,
+            "rosters": rosters,
+            "players": players,
+            "owners": {
+                r["roster_id"]: {
+                    u["user_id"]: u.get("display_name", "Unknown") for u in users
+                }.get(r.get("owner_id", ""), f"Team {r['roster_id']}")
+                for r in rosters
+            },
+            "season": int(league.get("season") or 0),
+            "taxi_slots": league.get("settings", {}).get("taxi_slots", 5),
+            "records": build_records(rosters, draft_index, traded_for, activated),
+        }
+
+    def _player_name(self, players: dict, player_id: str) -> str:
+        return (players.get(player_id) or {}).get("full_name") or player_id
+
+    @app_commands.command(
+        name="taxiaudit",
+        description="Check every taxi squad against league rules, not Sleeper's",
+    )
+    @app_commands.describe(
+        season="Season to judge against (defaults to the upcoming one)"
+    )
+    async def taxi_audit(
+        self, interaction: discord.Interaction, season: Optional[int] = None
+    ) -> None:
+        await interaction.response.defer()
+        try:
+            ctx = await self._taxi_context()
+            target = season or ctx["season"]
+            violations = audit(ctx["records"], target)
+            over = over_slot_limit(ctx["rosters"], ctx["taxi_slots"])
+
+            embed = discord.Embed(
+                title=f"🚕 Taxi Audit — {target} season",
+                description=(
+                    "Sleeper allows anyone inside their first three years on a "
+                    "taxi slot. League rules are narrower: **only rookies you "
+                    "drafted yourself**, never after being activated, never "
+                    f"acquired by trade, and no more than **{TAXI_MAX_SEASONS} "
+                    "seasons** from their draft."
+                ),
+                color=(
+                    discord.Color.red() if violations or over
+                    else discord.Color.green()
+                ),
+            )
+
+            if violations:
+                by_owner: dict[str, list[str]] = {}
+                for violation in violations:
+                    owner = ctx["owners"].get(
+                        violation.roster_id, f"Team {violation.roster_id}"
+                    )
+                    detail = self._player_name(ctx["players"], violation.player_id)
+                    if violation.draft_season:
+                        detail += (
+                            f" (drafted {violation.draft_season}"
+                            + (
+                                f" rd{violation.draft_round}"
+                                if violation.draft_round
+                                else ""
+                            )
+                            + f", {violation.seasons_used} seasons)"
+                        )
+                    by_owner.setdefault(owner, []).append(
+                        f"• {detail} — {violation.reason_text}"
+                    )
+                for owner, lines in sorted(by_owner.items()):
+                    embed.add_field(
+                        name=f"❌ {owner}", value="\n".join(lines), inline=False
+                    )
+            else:
+                embed.add_field(
+                    name="✅ All clear",
+                    value="Every taxi squad is legal under league rules.",
+                    inline=False,
+                )
+
+            if over:
+                embed.add_field(
+                    name="🚨 Over the slot limit",
+                    value="\n".join(
+                        f"• {ctx['owners'].get(roster_id, roster_id)} — "
+                        f"{count}/{ctx['taxi_slots']}"
+                        for roster_id, count in over
+                    ),
+                    inline=False,
+                )
+
+            embed.set_footer(
+                text=(
+                    f"{len(violations)} violation(s) • judged against the "
+                    f"{target} season"
+                )
+            )
+            if not await self._ledger_size():
+                # Age and origin violations are unaffected by the ledger, but
+                # "already activated" ones can't be detected without it.
+                embed.add_field(
+                    name="Incomplete data",
+                    value=(
+                        "No activations on record, so this can only catch age "
+                        "and origin violations. Run `/taxibackfill`."
+                    ),
+                    inline=False,
+                )
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"taxiaudit failed: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ Error auditing taxi squads: {e}")
+
+    @app_commands.command(
+        name="taxieligible",
+        description="Who an owner could legally still put on their taxi squad",
+    )
+    @app_commands.describe(team_name="Owner to check (defaults to everyone)")
+    async def taxi_eligible(
+        self, interaction: discord.Interaction, team_name: Optional[str] = None
+    ) -> None:
+        await interaction.response.defer()
+        try:
+            ctx = await self._taxi_context()
+            eligible = eligible_additions(ctx["records"], ctx["season"])
+
+            by_owner: dict[str, list[str]] = {}
+            for record in eligible:
+                owner = ctx["owners"].get(
+                    record.roster_id, f"Team {record.roster_id}"
+                )
+                if team_name and team_name.lower() not in owner.lower():
+                    continue
+                label = self._player_name(ctx["players"], record.player_id)
+                if record.draft_season:
+                    label += f" ({record.draft_season} rd{record.draft_round})"
+                by_owner.setdefault(owner, []).append(f"• {label}")
+
+            embed = discord.Embed(
+                title="🚕 Taxi-Eligible Players",
+                description=(
+                    "Players still on the active roster who could legally be "
+                    "moved onto a taxi slot: own draftees, never activated, "
+                    f"within {TAXI_MAX_SEASONS} seasons of their draft."
+                ),
+                color=discord.Color.blue(),
+            )
+            if not await self._ledger_size():
+                embed.description = f"{self.UNSEEDED_WARNING}\n\n{embed.description}"
+                embed.color = discord.Color.orange()
+
+            if by_owner:
+                for owner, lines in sorted(by_owner.items()):
+                    embed.add_field(
+                        name=owner, value="\n".join(lines[:10]), inline=False
+                    )
+            else:
+                embed.add_field(
+                    name="Nobody",
+                    value=(
+                        "No eligible players. Under league rules taxi slots can "
+                        "only be filled immediately after the rookie draft, from "
+                        "that owner's own picks."
+                    ),
+                    inline=False,
+                )
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"taxieligible failed: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ Error checking eligibility: {e}")
+
+    @app_commands.command(
+        name="taxibackfill",
+        description="Admin: seed the taxi ledger from draft history and current rosters",
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def taxi_backfill(self, interaction: discord.Interaction) -> None:
+        """Bootstrap the ledger so activation tracking has a starting point.
+
+        Draft origin is recoverable from Sleeper forever, but activation
+        history is not - so anyone currently on the *active* roster who was
+        their own draftee is recorded as already activated. That's the
+        conservative reading: under league rules they could not go back on
+        taxi anyway, and it means we never wrongly re-open a slot.
+        """
+        await interaction.response.defer()
+        try:
+            ctx = await self._taxi_context()
+            season = ctx["season"]
+
+            written = activations = 0
+            for record in ctx["records"]:
+                if record.acquisition != Acquisition.ROOKIE_DRAFT:
+                    # Only own-draftees can ever matter for taxi purposes.
+                    continue
+
+                # On the active roster and eligible by age => must have been
+                # activated at some point, since taxi is the only other place
+                # an own-draftee could have been.
+                treat_as_activated = not record.on_taxi
+                async with db.execute(
+                    """
+                    INSERT INTO taxi_ledger (
+                        owner_id, player_id, acquisition, draft_season,
+                        draft_round, activated_season, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(owner_id, player_id) DO UPDATE SET
+                        acquisition=excluded.acquisition,
+                        draft_season=excluded.draft_season,
+                        draft_round=excluded.draft_round,
+                        updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (
+                        record.owner_id,
+                        record.player_id,
+                        record.acquisition.value,
+                        record.draft_season,
+                        record.draft_round,
+                        season if treat_as_activated else None,
+                        "backfilled from draft history",
+                    ),
+                ) as cursor:
+                    written += cursor.rowcount or 0
+                if treat_as_activated:
+                    activations += 1
+
+            violations = audit(ctx["records"], season)
+            await interaction.followup.send(
+                f"✅ Taxi ledger seeded: **{written}** own-draftee record(s), "
+                f"**{activations}** treated as already activated (currently on "
+                "the active roster).\n"
+                f"Draft origin came from Sleeper and is exact. Activations "
+                f"before today aren't recoverable from Sleeper, so anyone "
+                f"already off taxi is assumed activated — conservative, since "
+                f"they'd be ineligible either way.\n"
+                f"`/taxiaudit` currently reports **{len(violations)}** "
+                f"violation(s) for {season}."
+            )
+
+        except Exception as e:
+            logger.error(f"taxibackfill failed: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ Error backfilling taxi ledger: {e}")
+
     @app_commands.command(name="taxisquad", description="View a team's current taxi squad")
     @app_commands.describe(team_name="Name of the team owner (optional, shows all if omitted)")
     async def taxi_squad(

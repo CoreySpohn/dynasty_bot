@@ -84,6 +84,12 @@ a shared **derivation layer**, not a table.
 - **Playoff Scenarios** — `/playoffodds`, with clinched/eliminated proved by
   exhaustive enumeration rather than inferred from simulation
 - **Sacko Watch** — `/sacko`, last-place odds off the same simulation
+- **Taxi squad rule tracking** — `lib/taxi_rules.py` plus `/taxiaudit`,
+  `/taxieligible` and an admin `/taxibackfill`. Sleeper enforces none of the
+  league's taxi rules, so the bot holds them. Draft origin is derived from
+  the draft endpoints (verified complete for all 46 current taxi players);
+  activation history can't be, so `roster_snapshots` now records slots and
+  `taxi_ledger` keeps observed activations
 
 ---
 
@@ -200,6 +206,22 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   clinched/eliminated could produce those sentences but doesn't.
 - **The simulation ignores the playoff bracket itself.** Odds are for
   *making* the playoffs, not winning them.
+- **The 3-season taxi rule is ambiguous and needs a ruling.** "After 3
+  seasons they have to be activated or dropped" doesn't say whether the draft
+  year itself counts. `TAXI_MAX_SEASONS = 3` takes the stricter reading
+  (it does), which flags 8 players for 2026; the looser reading (`= 4`)
+  flags 2. One-line change either way.
+- **Taxi activations before 2026-07-25 are assumed, not observed.** Sleeper
+  can't tell us who was activated historically, so `/taxibackfill` records
+  every own-draftee currently off taxi as already activated. Conservative -
+  they'd be ineligible either way - but it isn't evidence.
+- **Trade-acquired players aren't auto-detected yet.** Rule 3 (a player
+  received in a trade can never go on taxi) is implemented in the engine and
+  read from `taxi_ledger`, but nothing yet walks `get_transactions` to
+  populate it. Currently no violations depend on it, since every taxi player
+  is their own owner's draftee.
+- **Nothing enforces taxi rules at the moment of the move.** `/taxiaudit`
+  reports after the fact; it doesn't stop an illegal Sleeper move.
 - **Cadence and quiet hours aren't state-aware.** `RUMORS_PER_WEEK` is one
   constant, so it can't yet be busier in-season or around the trade deadline
   than it is in the dead of the offseason.

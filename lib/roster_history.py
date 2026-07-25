@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from database import db
+from lib.taxi_rules import slot_of
 
 logger = logging.getLogger("dynasty_bot.roster_history")
 
@@ -39,6 +40,45 @@ def _composition(rosters: list[dict[str, Any]]) -> dict[int, frozenset[str]]:
         for roster in rosters
         if roster.get("roster_id") is not None
     }
+
+
+def _slots(rosters: list[dict[str, Any]]) -> dict[int, dict[str, str]]:
+    """{roster_id: {player_id: slot}} where slot is active/taxi/reserve.
+
+    Recorded alongside composition because the league's "once activated a
+    player can never go back on taxi" rule needs the taxi/active
+    distinction, and Sleeper only ever exposes the *current* roster - so an
+    activation that isn't captured when it happens is gone for good.
+    """
+    return {
+        roster["roster_id"]: {
+            player_id: slot_of(roster, player_id)
+            for player_id in roster.get("players") or []
+        }
+        for roster in rosters
+        if roster.get("roster_id") is not None
+    }
+
+
+async def get_slots_as_of(cutoff_date: str) -> dict[int, dict[str, str]]:
+    """{roster_id: {player_id: slot}} from the newest snapshot on or before
+    a date. Players recorded before slot tracking existed are omitted rather
+    than guessed at."""
+    snapshot_date = await get_snapshot_date_as_of(cutoff_date)
+    if not snapshot_date:
+        return {}
+
+    async with db.execute(
+        "SELECT roster_id, player_id, slot FROM roster_snapshots "
+        "WHERE recorded_date = ? AND slot IS NOT NULL",
+        (snapshot_date,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    slots: dict[int, dict[str, str]] = {}
+    for roster_id, player_id, slot in rows:
+        slots.setdefault(roster_id, {})[player_id] = slot
+    return slots
 
 
 async def get_snapshot_dates() -> list[str]:
@@ -125,13 +165,22 @@ async def store_snapshot(
         return False
 
     recorded_date = recorded_date or datetime.now().date().isoformat()
+    slots = _slots(rosters)
 
     latest_date = await get_snapshot_date_as_of(recorded_date)
     if latest_date:
         previous = await get_composition_as_of(latest_date)
-        if {rid: frozenset(pids) for rid, pids in previous.items()} == composition:
+        same_players = {
+            rid: frozenset(pids) for rid, pids in previous.items()
+        } == composition
+        # Slots have to be compared too. Activating a taxi player doesn't
+        # change *who* is rostered, so comparing composition alone would skip
+        # the write and silently lose the one event the league's
+        # "once activated, never again" rule depends on.
+        same_slots = await get_slots_as_of(latest_date) == slots
+        if same_players and same_slots:
             logger.info(
-                f"Roster composition unchanged since {latest_date}; "
+                f"Rosters and taxi slots unchanged since {latest_date}; "
                 "skipping snapshot"
             )
             return False
@@ -148,8 +197,15 @@ async def store_snapshot(
         for roster in rosters
         if roster.get("roster_id") is not None
     }
+    slots = _slots(rosters)
     rows = [
-        (recorded_date, roster_id, owners.get(roster_id), player_id)
+        (
+            recorded_date,
+            roster_id,
+            owners.get(roster_id),
+            player_id,
+            slots.get(roster_id, {}).get(player_id),
+        )
         for roster_id, player_ids in composition.items()
         for player_id in sorted(player_ids)
     ]
@@ -157,8 +213,8 @@ async def store_snapshot(
         async with db.execute(
             """
             INSERT INTO roster_snapshots
-                (recorded_date, roster_id, owner_id, player_id)
-            VALUES (?, ?, ?, ?)
+                (recorded_date, roster_id, owner_id, player_id, slot)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(recorded_date, roster_id, player_id) DO NOTHING
             """,
             row,
