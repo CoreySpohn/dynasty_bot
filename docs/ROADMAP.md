@@ -52,38 +52,35 @@ a shared **derivation layer**, not a table.
   (`/valuemovers` remains the pure-market-movement view)
 - **Trade grading** — `/tradegrades` prices both sides of a completed trade
   at trade-date values, plus how each side has aged since
-- **CI** — `uv run pytest` on every push and PR
+- **CI** — `uv run pytest` on every push and PR (workflow file needs a token
+  with `workflow` scope; verification is local for now)
+- **Weekly results derivation layer** — `lib/results.py`, the single place
+  Sleeper matchups become per-team weekly results. `/rankings` reads it
+  instead of its own loop; `calculate_optimal_lineup` and `FLEX_POSITIONS`
+  moved here and are re-exported from `cogs/analytics.py` for existing
+  importers. Completed weeks cached in-process, current week never
+- **Weekly Awards** — `/awards`, auto-posting once per completed week.
+  "Biggest upset" uses season-to-date averages as the expectation, since the
+  bot makes no predictions
+- **Shame Wall** — `/shamewall`: losses the optimal lineup would have won,
+  points left on the bench, zero-point starters
+- **Luck Index** — `/luckindex`, built on all-play expected wins. Lineup
+  efficiency is reported separately, because leaving points on the bench is
+  a decision, not luck
+- **Trash Talk** — `/trashtalk @owner`, grounded in that owner's real record,
+  bench waste, luck score and dynasty value rank
+- **Historical Matchups** — `/h2h`, attributed by owner rather than roster so
+  a league renewal doesn't credit the wrong person
+- **Championship Rings** — `/rings`, read from Sleeper's winners bracket
+  rather than guessed from a championship-week matchup id
 
 ---
 
 ## 📊 Advanced Analytics
 
-### Weekly results derivation layer
-The prerequisite for most of the section below, and it's a **module, not a
-table**. `get_matchups(league_id, week)` already returns `starters`,
-`players`, and `players_points` per team — everything needed for optimal
-lineup, bench points, and margins. `cogs/analytics.py` reads
-`players_points` for power rankings and throws the intermediate results
-away; `calculate_optimal_lineup` is right there too.
-
-Build `lib/results.py` returning computed per-team weekly results (score,
-opponent, W/L, optimal points, bench points), chaining `previous_league_id`
-for prior seasons. Have `/rankings` use it instead of its own loop. If
-latency bites, add an in-process TTL cache — finalized weeks are immutable,
-so caching is trivially safe.
-
-### Luck Index
-Points Against vs league average, close wins/losses, optimal lineup vs
-actual. All computable from the results layer.
-
 ### Playoff Scenarios
 Auto-calculated clinching/elimination scenarios each week.
 - "Noah needs to win AND have Fuzzy lose to clinch playoffs"
-
-### Historical Matchups
-All-time head-to-head records — a `GROUP BY` over the results layer once it
-chains prior seasons.
-- "Corey is 12-5 all-time vs Fuzzy"
 
 ### "What If" Machine
 `/whatif @player trade` — simulates how your season would've gone with
@@ -93,37 +90,13 @@ different roster decisions.
 
 ## 🏆 Awards & Recognition
 
-### Weekly Awards
-Auto-posts after each week. Cheap once the results layer exists; needs one
-small table for "already posted this award" idempotency (follow the existing
-`reminder_history` pattern rather than inventing a new one).
-- 👑 **Highest Scorer**
-- 😱 **Biggest Upset**
-- 📈 **Best Bench** (most points left on bench)
-- 💔 **Worst Beat** (highest-scoring loser)
-
-### Shame Wall
-Worst starts/sits of the week — optimal-lineup gap and BYE/injured starters,
-straight off the results layer.
-- "DaFuzz started a player on BYE! 🤦"
-- "Rob Jr. left 40 points on the bench!"
-
 ### Sacko Watch
-Dramatic countdown tracking who's in danger of last place.
-
-### Championship Ring Counter
-Historical champions with emoji rings — derivable from playoff brackets
-across the `previous_league_id` chain.
-- 🏆🏆🏆 Fuzzy (3x Champion)
+Dramatic countdown tracking who's in danger of last place. Straightforward
+on top of the results layer; mostly a question of how mean to be.
 
 ---
 
 ## 🎰 Fun & Games
-
-### Trash Talk Generator
-`/trashtalk @opponent` — AI-powered smack talk for your weekly matchup. The
-reporter-persona and failover machinery already exists, so this is mostly
-prompt work. Good quick win.
 
 ### Weekly Predictions
 Bot predicts each matchup winner with confidence %, tracks accuracy over the
@@ -207,6 +180,15 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   bulletproof against short or common names.
 - **`config/league_state.yaml` drifts.** It's manual, and a stale
   `current_state` silently gates the wrong set of deadline reminders.
+- **Zero-point starters aren't provably byes.** The shame wall reports
+  "started someone who scored nothing", which is honest, rather than
+  claiming BYE — Sleeper's player payload doesn't carry bye weeks reliably.
+- **Awards and the shame wall have never run on live data.** Everything is
+  unit-tested against synthetic matchups, but the 2026 season hasn't started,
+  so week 1 is the first real exercise. Expect to tune wording.
+- **`/h2h` and `/rings` are API-heavy.** They walk every chained season.
+  Fine for occasional use; if they get called often, cache per season the way
+  `lib/results.py` caches completed weeks.
 
 ---
 
@@ -217,18 +199,16 @@ before NFL Week 1 or it sits idle for a year.
 
 | Priority | Feature | Complexity | Deadline |
 |----------|---------|------------|----------|
-| 🔴 High | Weekly results derivation layer | Medium | Before Week 1 |
-| 🔴 High | Weekly Awards | Low (after layer) | Before Week 1 |
-| 🔴 High | Shame Wall | Low (after layer) | Before Week 1 |
-| 🔴 High | Luck Index | Low (after layer) | Before Week 1 |
-| 🟡 Medium | Trash Talk Generator | Low | Any time |
-| 🟡 Medium | Historical Matchups | Low (after layer) | Any time |
+| 🔴 High | Weekly Predictions | Medium | Before Week 1 |
 | 🟡 Medium | Playoff Scenarios | Medium | Before playoffs |
-| 🟡 Medium | Weekly Predictions | Medium | Before Week 1 |
-| 🟢 Low | Championship Rings | Low | Any time |
+| 🟡 Medium | Sacko Watch | Low (after layer) | Before playoffs |
+| 🟡 Medium | Weekly Newsletter | Medium | Any time |
+| 🟢 Low | Injury Roasts | Low | Any time |
+| 🟢 Low | Player Birthday Alerts | Low | Any time |
 | 🟢 Low | Trade Regret Tracker | Low (needs history depth) | Blocked ~months |
-| 🟢 Low | Weekly Newsletter | Medium | After awards |
+| 🟢 Low | "What If" Machine | High | Any time |
 | 🟢 Low | Survivor Pool | High | Before Week 1 |
+| 🟢 Low | Second value source (FantasyCalc) | Medium | Any time |
 
 ---
 

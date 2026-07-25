@@ -20,6 +20,13 @@ from cogs.trade_values import get_team_dynasty_values
 from config import SLEEPER_LEAGUE_ID
 from database import db
 from lib.plotting import render_power_rankings
+from lib.results import (
+    FLEX_POSITIONS,
+    TeamRecord,
+    build_records,
+    build_week_results,
+    calculate_optimal_lineup,
+)
 from lib.standings import compute_standings
 
 if TYPE_CHECKING:
@@ -30,58 +37,16 @@ logger = logging.getLogger("dynasty_bot.analytics")
 # Thread pool for CPU-intensive operations
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analytics")
 
-# Position eligibility for flex slots
-FLEX_POSITIONS = {
-    "FLEX": ["RB", "WR", "TE"],
-    "SUPER_FLEX": ["QB", "RB", "WR", "TE"],
-    "REC_FLEX": ["WR", "TE"],
-    "WRRB_FLEX": ["WR", "RB"],
-}
-
-
-def calculate_optimal_lineup(
-    roster_players: list[dict],
-    roster_positions: list[str],
-) -> float:
-    """Calculate maximum potential points for an optimal lineup.
-    
-    Greedily assigns the highest-scoring players to each roster slot,
-    respecting position eligibility rules.
-    
-    This function runs in a thread pool to avoid blocking the event loop.
-    
-    Args:
-        roster_players: List of dicts with 'position' and 'points' keys.
-        roster_positions: List of roster slot positions from league settings.
-        
-    Returns:
-        Maximum potential points for the optimal lineup.
-    """
-    # Sort players by points descending
-    available = sorted(roster_players, key=lambda x: x.get("points", 0), reverse=True)
-    used_indices = set()
-    total_points = 0.0
-    
-    # Only count starter positions (not BN, IR)
-    starter_positions = [p for p in roster_positions if p not in ("BN", "IR")]
-    
-    for slot in starter_positions:
-        # Determine eligible positions for this slot
-        if slot in FLEX_POSITIONS:
-            eligible = FLEX_POSITIONS[slot]
-        else:
-            eligible = [slot]
-        
-        # Find best available player for this slot
-        for idx, player in enumerate(available):
-            if idx in used_indices:
-                continue
-            if player.get("position") in eligible:
-                total_points += player.get("points", 0)
-                used_indices.add(idx)
-                break
-    
-    return total_points
+# FLEX_POSITIONS and calculate_optimal_lineup now live in lib/results.py,
+# which is the single place weekly results get reconstructed. They're
+# re-exported here because cogs/draft.py, three scripts and two test
+# modules already import them from this module.
+__all__ = [
+    "Analytics",
+    "FLEX_POSITIONS",
+    "calculate_optimal_lineup",
+    "generate_power_rankings_sync",
+]
 
 
 def generate_power_rankings_sync(
@@ -120,79 +85,36 @@ def generate_power_rankings_sync(
     """
     dynasty_values = dynasty_values or {}
     rankings_data = []
-    
-    # Build roster lookup
-    roster_lookup = {r["roster_id"]: r for r in rosters}
-    
+
+    # Reconstruct every week through the shared derivation layer rather than
+    # re-deriving matchup pairing and optimal lineups here. lib/results.py is
+    # the one place that logic lives now, so awards, the shame wall and the
+    # luck index all agree with these numbers by construction.
+    all_results = []
+    for week in range(1, current_week + 1):
+        all_results.extend(
+            build_week_results(
+                matchups_by_week.get(week, []),
+                players,
+                roster_positions,
+                season,
+                week,
+            )
+        )
+    records = build_records(all_results)
+
     for roster in rosters:
         roster_id = roster["roster_id"]
         owner_id = roster.get("owner_id", "")
         owner_name = users.get(owner_id, f"Team {roster_id}")
-        
-        # Initialize accumulators
-        total_potential = 0.0
-        total_points_for = 0.0
-        total_points_against = 0.0
-        wins = 0
-        losses = 0
-        
-        # Calculate stats for each week
-        for week in range(1, current_week + 1):
-            week_matchups = matchups_by_week.get(week, [])
-            
-            # Find this team's matchup
-            team_matchup = None
-            opponent_matchup = None
-            
-            for m in week_matchups:
-                if m.get("roster_id") == roster_id:
-                    team_matchup = m
-                    matchup_id = m.get("matchup_id")
-                    # Find opponent
-                    for o in week_matchups:
-                        if (
-                            o.get("matchup_id") == matchup_id
-                            and o.get("roster_id") != roster_id
-                        ):
-                            opponent_matchup = o
-                            break
-                    break
-            
-            if not team_matchup:
-                continue
-            
-            # Get points scored
-            points_for = team_matchup.get("points", 0) or 0
-            total_points_for += points_for
-            
-            if opponent_matchup:
-                points_against = opponent_matchup.get("points", 0) or 0
-                total_points_against += points_against
-                
-                if points_for > points_against:
-                    wins += 1
-                elif points_for < points_against:
-                    losses += 1
-            
-            # Calculate potential points for this week
-            players_points = team_matchup.get("players_points", {})
-            roster_players = []
-            
-            for player_id, pts in players_points.items():
-                player_data = players.get(player_id, {})
-                roster_players.append({
-                    "position": player_data.get("position", ""),
-                    "points": pts or 0,
-                })
-            
-            week_potential = calculate_optimal_lineup(roster_players, roster_positions)
-            total_potential += week_potential
-        
-        # Calculate derived stats
-        games_played = wins + losses
-        win_pct = (wins / games_played * 100) if games_played > 0 else 0
+
+        record = records.get(roster_id) or TeamRecord(roster_id)
+        total_potential = record.optimal_points
+        total_points_for = record.points_for
+        wins, losses = record.wins, record.losses
+        win_pct = record.win_pct
         avg_points = total_points_for / current_week if current_week > 0 else 0
-        
+
         dynasty_value = dynasty_values.get(roster_id, 0)
 
         # Calculate power level (weighted score)
@@ -213,7 +135,7 @@ def generate_power_rankings_sync(
             "Points For": round(total_points_for, 1),
             "Average Points": round(avg_points, 1),
             "Dynasty Value": dynasty_value,
-            "Record": f"{wins}-{losses}",
+            "Record": record.record_text,
             "Win %": f"{win_pct:.0f}%",
         })
     

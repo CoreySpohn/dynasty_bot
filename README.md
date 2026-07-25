@@ -87,6 +87,45 @@ uv run python main.py
 | `/payouts` | Payout breakdown |
 | `/draftorder` | Current projected draft order |
 | `/primetime` | Primetime lineup lock status |
+| `/luckindex` | Record vs. what all-play scoring deserved, plus lineup efficiency |
+
+---
+
+### 🏆 Weekly Recaps
+
+Awards and the shame wall **auto-post** to the announcements channel once per completed week. `posted_recaps` records what's been posted, so a restart or a repeated tick never double-posts. The slash commands below run them on demand for any week.
+
+| Command | Description |
+|---------|-------------|
+| `/awards [week]` | Highest scorer, biggest upset, best bench, worst beat |
+| `/shamewall [week]` | Losses the optimal lineup would have won, points left on the bench, zero-point starters |
+
+Both default to the **last completed week** — the in-progress week has partial scores, and crowning a highest scorer mid-Sunday is noise.
+
+**How "biggest upset" is decided:** the bot doesn't make predictions, so it uses season-to-date average points as the expectation — the winner who beat the team averaging the most more per week.
+
+---
+
+### 📜 League History
+
+All-time records across every season Sleeper has on record, chained through `previous_league_id`. Attribution is by **owner**, not roster: a roster ID is only stable within one season's league, so aggregating by roster would credit the wrong person after a league renewal.
+
+| Command | Description |
+|---------|-------------|
+| `/h2h [owner] [against]` | All-time head-to-head — one owner vs. everyone, or a specific pair |
+| `/rings` | Championship counts with 🏆 per title, from Sleeper's winners bracket |
+
+These walk every season, so they're the most API-expensive commands in the bot. Fine occasionally; not for a loop.
+
+---
+
+### 🔥 Trash Talk
+
+| Command | Description |
+|---------|-------------|
+| `/trashtalk <opponent> [reporter]` | AI smack talk aimed at another owner, in a reporter's voice |
+
+Grounded in real numbers pulled live — their record, points left on the bench, luck score, close-game record, dynasty value rank, and whether they're your opponent this week — because specific lands harder than generic. Prompt-capped to team-and-decisions banter, nothing personal.
 
 ---
 
@@ -251,9 +290,11 @@ The rule for this codebase: **persist only what upstream won't give back.**
 | Sleeper (matchups, results, transactions, brackets) | Yes, forever, chained via `previous_league_id` | compute live — don't duplicate it |
 | KeepTradeCut | No API, no history | snapshot daily (`ktc_values`) |
 | Roster composition | Sleeper serves *current* only | snapshot daily (`roster_snapshots`) |
-| Bot-generated (raids, Kohl's ledger, nickname tags) | Nothing else knows it | persist |
+| Bot-generated (raids, Kohl's ledger, nickname tags, posted recaps) | Nothing else knows it | persist |
 
 Storing derived Sleeper data means keeping a second source of truth in sync for no gain, and it can always be recomputed. Storing KTC values and roster composition is the opposite: miss a day and it's gone permanently.
+
+**`lib/results.py` is where that recomputation happens** — the single place Sleeper matchup payloads get turned into per-team weekly results (score, opponent, W/L, optimal lineup, points left on the bench). Power rankings, awards, the shame wall, the luck index, head-to-head and `/trashtalk` all read from it, so their numbers agree by construction instead of by coincidence. Completed weeks are immutable and cached in-process; the current week never is.
 
 ### Project Structure
 ```
@@ -267,6 +308,8 @@ dynasty_bot/
 │   ├── taxi.py               # Taxi raiding
 │   ├── trade_values.py       # KTC values, team value history, trade grading
 │   ├── analytics.py          # Power rankings, standings, matchups
+│   ├── recaps.py             # Weekly awards, shame wall, luck index
+│   ├── history.py            # All-time head-to-head, championship rings
 │   ├── responses.py          # Random responses
 │   ├── scheduler.py          # Reminders
 │   └── ...
@@ -276,6 +319,7 @@ dynasty_bot/
 │   ├── nfl_schedule.py       # NFL schedule (nflreadpy)
 │   └── odds.py               # The Odds API
 ├── lib/                      # Shared utilities
+│   ├── results.py            # Weekly results derivation (the shared layer)
 │   ├── members.py            # Member registry
 │   ├── roster_history.py     # Daily roster composition snapshots
 │   ├── standings.py          # Standings computation

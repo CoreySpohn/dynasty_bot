@@ -316,6 +316,22 @@ class Database:
             ON ktc_values(player_name, recorded_date)
         """)
 
+        # Posted weekly recaps (awards, shame wall), so a re-run or a
+        # restart mid-week doesn't double-post to the channel. Same
+        # idempotency shape as reminder_history: the UNIQUE constraint is
+        # the guard, and a row's existence means "already posted".
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS posted_recaps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                season INTEGER NOT NULL,
+                week INTEGER NOT NULL,
+                recap_type TEXT NOT NULL,
+                message_id TEXT,
+                posted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(season, week, recap_type)
+            )
+        """)
+
         # Daily roster composition snapshots.
         #
         # Sleeper only serves *current* rosters, so past composition is

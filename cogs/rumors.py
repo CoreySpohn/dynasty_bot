@@ -32,6 +32,13 @@ from lib.ai_client import GeminiClient
 from lib.claude_client import ClaudeClient
 from lib.members import get_member_registry
 from lib.openai_client import OpenAIClient
+from lib.results import (
+    build_records,
+    compute_luck,
+    get_season_results,
+    get_week_results,
+    played,
+)
 
 if TYPE_CHECKING:
     from main import DynastyBot
@@ -1041,6 +1048,202 @@ class LeagueRumors(commands.Cog):
             lines.append(f"{emoji} {name}")
         return "\n".join(lines)
     
+    async def _trashtalk_context(
+        self,
+        target_name: str,
+        target_sleeper_id: Optional[str],
+        author_sleeper_id: Optional[str],
+    ) -> str:
+        """Real facts about the target for the AI to work from.
+
+        Generic smack talk is boring; specific smack talk lands. Everything
+        here is derived live from Sleeper via lib/results.py, so it agrees
+        with /rankings and /luckindex.
+        """
+        lines: list[str] = []
+        try:
+            league = await self.bot.sleeper.get_league(self.league_id)
+            rosters = await self.bot.sleeper.get_rosters(self.league_id)
+            players = await self.bot.sleeper.get_all_players()
+
+            by_owner = {r.get("owner_id"): r for r in rosters}
+            their_roster = by_owner.get(target_sleeper_id)
+            my_roster = by_owner.get(author_sleeper_id)
+
+            season_results = await get_season_results(
+                self.bot.sleeper, self.league_id, players=players, league=league
+            )
+            records = build_records(played(season_results))
+            luck = compute_luck(season_results)
+
+            if their_roster:
+                roster_id = their_roster["roster_id"]
+
+                record = records.get(roster_id)
+                if record and record.games:
+                    lines.append(
+                        f"{target_name} is {record.record_text}, averaging "
+                        f"{record.points_for / record.games:.1f} points a week."
+                    )
+                    if record.points_left_on_bench > 0:
+                        lines.append(
+                            f"{target_name} has left "
+                            f"{record.points_left_on_bench:.1f} points on the "
+                            "bench this season."
+                        )
+
+                index = luck.get(roster_id)
+                if index and index.luck_score > 0.5:
+                    lines.append(
+                        f"{target_name}'s record is {index.luck_score:.1f} wins "
+                        "better than their scoring deserves - they have been lucky, "
+                        "not good."
+                    )
+                elif index and index.luck_score < -0.5:
+                    lines.append(
+                        f"{target_name} has been genuinely unlucky: "
+                        f"{abs(index.luck_score):.1f} wins worse than their "
+                        "scoring deserves."
+                    )
+                if index and index.close_losses > index.close_wins:
+                    lines.append(
+                        f"{target_name} is {index.close_wins}-{index.close_losses} "
+                        "in close games - they fold late."
+                    )
+
+                values = await get_team_dynasty_values(rosters)
+                ranked = sorted(values.items(), key=lambda kv: kv[1], reverse=True)
+                for place, (rid, value) in enumerate(ranked, 1):
+                    if rid == roster_id:
+                        lines.append(
+                            f"{target_name}'s roster is #{place} of {len(ranked)} "
+                            f"in dynasty value ({value:,})."
+                        )
+                        break
+
+            if my_roster and their_roster:
+                week = league.get("settings", {}).get("leg", 1) or 1
+                week_results = await get_week_results(
+                    self.bot.sleeper,
+                    self.league_id,
+                    week,
+                    players=players,
+                    league=league,
+                )
+                mine = next(
+                    (r for r in week_results if r.roster_id == my_roster["roster_id"]),
+                    None,
+                )
+                if mine and mine.opponent_roster_id == their_roster["roster_id"]:
+                    lines.append(f"You two play each other in week {week}.")
+
+        except Exception as e:
+            # Facts are a bonus, not a requirement - still roast them.
+            logger.warning(f"Could not build trash talk context: {e}")
+
+        return "\n".join(f"- {line}" for line in lines)
+
+    @app_commands.command(
+        name="trashtalk",
+        description="AI-generated smack talk aimed at another owner",
+    )
+    @app_commands.describe(
+        opponent="Owner to roast (name or nickname)",
+        reporter="Who delivers it (defaults to a random reporter)",
+    )
+    async def trashtalk(
+        self,
+        interaction: discord.Interaction,
+        opponent: str,
+        reporter: Optional[str] = None,
+    ):
+        await interaction.response.defer()
+        try:
+            registry = get_member_registry()
+
+            target = registry.find(opponent)
+            if target is None:
+                matches = registry.find_fuzzy(opponent)
+                if len(matches) == 1:
+                    target = matches[0]
+                elif len(matches) > 1:
+                    names = ", ".join(m.name for m in matches[:5])
+                    await interaction.followup.send(
+                        f"🤔 \"{opponent}\" could be any of: {names}. Be specific."
+                    )
+                    return
+            if target is None:
+                await interaction.followup.send(
+                    f"❌ No league member matches \"{opponent}\"."
+                )
+                return
+
+            author = registry.find_by_discord_id(interaction.user.id)
+
+            resolved = await self._resolve_reporter(reporter or "random", None)
+            if resolved is None:
+                await interaction.followup.send(
+                    "❌ Pick a reporter, or leave it blank for a random one."
+                )
+                return
+            reporter_name, reporter_style, emoji = resolved
+
+            facts = await self._trashtalk_context(
+                target.name,
+                target.sleeper_id,
+                author.sleeper_id if author else None,
+            )
+            author_name = author.name if author else interaction.user.display_name
+
+            prompt = f"""You are {reporter_name}, delivering trash talk in a
+dynasty fantasy football league group chat.
+
+STAY IN CHARACTER - your voice must be unmistakable:
+{reporter_style}
+
+Write 2-4 sentences of smack talk about {target.name}, on behalf of
+{author_name}. Use the real facts below - specific beats generic, and a
+real stat lands harder than a vague insult.
+
+Rules:
+- Use first names only. Never mention fantasy team names.
+- Punch at their team and their decisions, not at anything personal.
+- Keep it playful league banter, the kind friends give each other. No
+  slurs, no cruelty, nothing about their family, looks, or real life.
+- No meta-commentary, no preamble. Just the trash talk.
+
+FACTS ABOUT {target.name.upper()}:
+{facts or "- Nothing notable. Mock the lack of anything worth mentioning."}
+
+Write it AS {reporter_name}:"""
+
+            text = await self._ai_call("generate", prompt=prompt, max_tokens=350)
+            if not text:
+                await interaction.followup.send(
+                    "❌ Every AI backend struck out. Try again in a minute."
+                )
+                return
+
+            posted = await self._post_rumor(
+                content=text,
+                reporter_name=reporter_name,
+                emoji=emoji,
+                source=f"{author_name} vs {target.name}",
+            )
+            if posted:
+                await interaction.followup.send(
+                    f"🔥 {emoji} **{reporter_name}** has words for **{target.name}**."
+                )
+            else:
+                await interaction.followup.send(embed=discord.Embed(
+                    description=text,
+                    color=discord.Color.orange(),
+                ).set_author(name=f"{emoji} {reporter_name}"))
+
+        except Exception as e:
+            logger.error(f"trashtalk failed: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ Error generating trash talk: {e}")
+
     async def _post_rumor(
         self,
         content: str,

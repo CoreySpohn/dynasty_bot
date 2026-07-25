@@ -33,6 +33,32 @@ class OpenAIClient:
             self.client = None
             logger.warning("OPENAI_API_KEY not set, OpenAI features disabled")
 
+    async def generate(self, prompt: str, max_tokens: int = 400) -> Optional[str]:
+        """Run an arbitrary prompt through this backend.
+
+        Prompt *content* belongs with the feature that needs it rather than
+        being duplicated as yet another bespoke method across all three
+        clients. Clients handle transport; cogs handle wording.
+
+        Returns:
+            Generated text, or None if this backend failed, so callers can
+            fail over via LeagueRumors._ai_call.
+        """
+        if not self.client:
+            logger.error("OpenAI client not initialized")
+            return None
+
+        try:
+            response = await self.client.responses.create(
+                model=self.model_name,
+                input=prompt,
+                max_output_tokens=max_tokens,
+            )
+            return (response.output_text or "").strip() or None
+        except Exception as e:
+            logger.error(f"OpenAI API error: {e}")
+            return None
+
     async def rewrite_as_reporter(
         self,
         rumor: str,

@@ -33,6 +33,33 @@ class ClaudeClient:
             self.client = None
             logger.warning("ANTHROPIC_API_KEY not set, Claude features disabled")
 
+    async def generate(self, prompt: str, max_tokens: int = 400) -> Optional[str]:
+        """Run an arbitrary prompt through this backend.
+
+        Prompt *content* belongs with the feature that needs it rather than
+        being duplicated as yet another bespoke method across all three
+        clients. Clients handle transport; cogs handle wording.
+
+        Returns:
+            Generated text, or None if this backend failed, so callers can
+            fail over via LeagueRumors._ai_call.
+        """
+        if not self.client:
+            logger.error("Claude client not initialized")
+            return None
+
+        try:
+            response = await self.client.messages.create(
+                model=self.model_name,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = next((b.text for b in response.content if b.type == "text"), "")
+            return text.strip() or None
+        except Exception as e:
+            logger.error(f"Claude API error: {e}")
+            return None
+
     async def rewrite_as_reporter(
         self,
         rumor: str,

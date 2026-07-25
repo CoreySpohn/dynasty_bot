@@ -115,6 +115,23 @@ class SleeperClient:
         """
         return await self._get(f"/league/{league_id}/matchups/{week}")
     
+    async def get_winners_bracket(self, league_id: str) -> list[dict[str, Any]]:
+        """Get the playoff winners bracket for a league.
+
+        This is the authoritative source for who actually won a season -
+        better than inferring it from a championship-week matchup_id.
+
+        Args:
+            league_id: The Sleeper league ID.
+
+        Returns:
+            List of bracket match objects. Each has `r` (round), `m` (match
+            id), `t1`/`t2` (roster ids, or a {"w"/"l": match_id} reference
+            before that feeder match resolves), and `w`/`l` (winner and
+            loser roster ids) once played.
+        """
+        return await self._get(f"/league/{league_id}/winners_bracket")
+
     async def get_drafts(self, league_id: str) -> list[dict[str, Any]]:
         """Get all drafts for a league.
         

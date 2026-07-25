@@ -33,7 +33,39 @@ class GeminiClient:
         else:
             self.client = None
             logger.warning("GEMINI_API_KEY not set, AI features disabled")
-    
+
+    async def generate(self, prompt: str, max_tokens: int = 400) -> Optional[str]:
+        """Run an arbitrary prompt through this backend.
+
+        Prompt *content* belongs with the feature that needs it rather than
+        being duplicated as yet another bespoke method across all three
+        clients. Clients handle transport; cogs handle wording.
+
+        Returns:
+            Generated text, or None if this backend failed, so callers can
+            fail over via LeagueRumors._ai_call.
+        """
+        if not self.client:
+            logger.error("Gemini client not initialized")
+            return None
+
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    # Thinking draws from the same budget as output, so leave
+                    # headroom above the caller's ask.
+                    max_output_tokens=max(1000, max_tokens),
+                    temperature=1.0,
+                    thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                ),
+            )
+            return (response.text or "").strip() or None
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            return None
+
     async def rewrite_as_reporter(
         self,
         rumor: str,
