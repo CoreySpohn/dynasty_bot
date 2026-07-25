@@ -195,12 +195,15 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   whether the renewal alone is enough to enter it.
   The `transitions` block is likewise still `null` and unread by anything —
   the derivation uses live signals instead.
-- **The league ID has to be updated by hand every renewal.** Sleeper mints a new
-  league each season and offers no forward pointer, so nothing can follow it
-  automatically from the old ID. It could be discovered by querying a known
-  user's leagues for the current season
-  (`/user/<user_id>/leagues/nfl/<season>`) and matching on name, which would
-  make renewal zero-touch. Not built; `SLEEPER_LEAGUE_ID` is correct for 2026.
+- **League renewal is zero-touch now, but only while the name holds.**
+  `lib/league_resolver.py` follows the league via
+  `/user/<SLEEPER_USER_ID>/leagues/nfl/<season>`, matching on name. If the
+  league is ever renamed *and* the config isn't updated in the same breath,
+  resolution silently declines and the bot keeps serving the frozen previous
+  season — the same failure as before, just harder to notice because nothing
+  looks broken. `SLEEPER_LEAGUE_NAME` is the escape hatch. A louder signal
+  (announcing "couldn't resolve this season's league" to the commish channel)
+  would close the gap.
 - **Zero-point starters aren't provably byes.** The shame wall reports
   "started someone who scored nothing", which is honest, rather than
   claiming BYE — Sleeper's player payload doesn't carry bye weeks reliably.

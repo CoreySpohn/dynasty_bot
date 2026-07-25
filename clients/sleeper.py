@@ -68,6 +68,25 @@ class SleeperClient:
         """
         return await self._get("/state/nfl")
 
+    async def get_user_leagues(
+        self, user_id: str, season: int
+    ) -> list[dict[str, Any]]:
+        """Every NFL league a user is in for a season.
+
+        Used to follow the league across renewals: Sleeper mints a new league
+        each season with no forward pointer from the old one, but the renewed
+        league does show up here. See `lib/league_resolver.py`.
+
+        Args:
+            user_id: Sleeper user ID.
+            season: Season year.
+
+        Returns:
+            League dicts, which may include unrelated leagues the user is in -
+            callers must match on name rather than assume one result.
+        """
+        return await self._get(f"/user/{user_id}/leagues/nfl/{season}")
+
     async def get_league(self, league_id: str) -> dict[str, Any]:
         """Get league settings and metadata.
         

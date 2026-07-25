@@ -72,7 +72,7 @@ Hourly-with-low-odds rather than one coarse timer, deliberately: a `tasks.loop(h
 | `/taxiaudit [season]` | Check every taxi squad against **league** rules, not Sleeper's |
 | `/taxieligible [team]` | Who could legally be moved onto a taxi slot *right now* |
 
-**Admin:** `/taxibackfill` seeds the ledger from draft history. Worth running once, though it only changes answers during a draft off-season — outside one, no addition is legal anyway.
+**Admin:** `/taxibackfill` seeds the ledger from draft history. Run once for the 2026 season — 242 own-draftee rows, 196 of them inferred as already activated, leaving exactly the 46 players currently on taxi un-activated. Idempotent, so re-running is safe.
 
 #### Why the bot has to track this itself
 
@@ -291,7 +291,12 @@ Tags owner nicknames with league context (e.g. `Corey [3rd place]`) without touc
 ```bash
 # Required
 DISCORD_TOKEN=your_bot_token
-SLEEPER_LEAGUE_ID=your_league_id   # changes every year - see below
+SLEEPER_LEAGUE_ID=your_league_id   # seed/fallback; changes every renewal
+
+# Optional but recommended: lets the bot follow the league across renewals
+# instead of needing SLEEPER_LEAGUE_ID updated by hand every year.
+SLEEPER_USER_ID=your_sleeper_user_id
+SLEEPER_LEAGUE_NAME=              # only if the league gets renamed
 
 # For Kohl's Cash betting
 THE_ODDS_API_KEY=your_odds_api_key
@@ -310,9 +315,23 @@ ALERT_CHANNEL_ID=channel_for_alerts
 KOHLS_FORUM_CHANNEL_ID=forum_for_game_threads
 ```
 
-### `SLEEPER_LEAGUE_ID` changes every season
+### `SLEEPER_LEAGUE_ID` changes every season — and the bot now follows it
 
-Renewing a dynasty league on Sleeper creates a **brand new league** with a new ID; the old one stays frozen at the season it finished. So this variable has to be updated once a year, and until it is, the bot reads a league that will never change again — the stale-anchor and stale-season bugs both traced back to exactly that.
+Renewing a dynasty league on Sleeper creates a **brand new league** with a new ID; the old one stays frozen at the season it finished. Until it's updated, the bot reads a league that will never change again — the stale-anchor and stale-season bugs both traced back to exactly that.
+
+Set **`SLEEPER_USER_ID`** and it stops being a manual job. At startup the bot looks up that user's leagues for the current season, finds the one whose name matches the league it's currently pointed at, and adopts the new ID (`lib/league_resolver.py`). `SLEEPER_LEAGUE_ID` becomes a seed and a fallback rather than the final word — no extra config needed, since the expected name comes from the league already configured. Override with `SLEEPER_LEAGUE_NAME` if the league is ever renamed.
+
+Name matching is load-bearing, not decoration. The configured user is in three leagues for 2025:
+
+```
+1267592261261078528  🪓 2025 Epsteins Island Was Never Real League   (10 teams)
+1254970896590839808  2025 Epsteins Island Was Never Real League      (10 teams)
+1231652068087844864  The Superflexers                                (12 teams)
+```
+
+so "the first one" or "the 12-team one" would eventually pick wrong. The resolver requires an exact name match (case- and whitespace-insensitive), checks the team count, and **refuses to guess** when two leagues match — falling back to the configured ID. That's the safe failure: a stale league shows old data, while the wrong league shows confident, plausible data about strangers. Every API failure falls back the same way, so the bot can never end up pointing at nothing.
+
+It also skips the lookup entirely once the configured ID is already on the current season, which is every startup after the first.
 
 Nothing else needs migrating. Verified across the 2025 → 2026 renewal (`1231652068087844864` → `1329282772417671168`):
 
@@ -416,6 +435,7 @@ dynasty_bot/
 ├── lib/                      # Shared utilities
 │   ├── nfl_calendar.py       # Preseason weeks, taxi deadline + its guards
 │   ├── league_state.py       # Derives off_season/pre_season/in_season
+│   ├── league_resolver.py    # Follows the league across annual renewals
 │   ├── results.py            # Weekly results derivation (the shared layer)
 │   ├── projections.py        # Scoring model, win probability, simulation
 │   ├── members.py            # Member registry

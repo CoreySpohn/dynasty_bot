@@ -14,7 +14,9 @@ import discord
 from discord.ext import commands
 
 from clients.sleeper import SleeperClient
+import config
 from config import DISCORD_TOKEN, SLEEPER_LEAGUE_ID
+from lib.league_resolver import resolve_league_id
 from database import db
 
 
@@ -70,7 +72,13 @@ class DynastyBot(commands.Bot):
         self._session = aiohttp.ClientSession()
         self.sleeper = SleeperClient(self._session)
         logger.info("Sleeper client ready.")
-        
+
+        # Follow the league across renewals before any cog loads. Cogs do
+        # `from config import SLEEPER_LEAGUE_ID` at import time, so rebinding
+        # the module attribute has to happen first to be picked up - which is
+        # why this sits here rather than in a cog.
+        await self.resolve_league()
+
         # Load all extension cogs from the cogs directory
         await self.load_extensions()
         
@@ -79,6 +87,34 @@ class DynastyBot(commands.Bot):
         await self.tree.sync()
         logger.info("Application commands synced.")
     
+    async def resolve_league(self) -> str:
+        """Point the bot at the current season's league.
+
+        A renewal gives the league a new ID and freezes the old one forever, so
+        a config value that was right last year silently serves last year's
+        data. This looks up the configured owner's league of the same name for
+        the current season and adopts it.
+
+        Falls back to the configured ID on any failure or ambiguity - see
+        lib/league_resolver, which refuses to guess between same-named leagues.
+        """
+        resolved = await resolve_league_id(
+            self.sleeper,
+            config.SLEEPER_USER_ID,
+            config.SLEEPER_LEAGUE_ID,
+            config.SLEEPER_LEAGUE_NAME,
+        )
+        if resolved != config.SLEEPER_LEAGUE_ID:
+            logger.warning(
+                f"Using resolved league {resolved} instead of configured "
+                f"{config.SLEEPER_LEAGUE_ID}"
+            )
+            # Rebind so cogs importing the constant below get the new value.
+            config.SLEEPER_LEAGUE_ID = resolved
+        self.league_id = resolved
+        logger.info(f"League ID: {self.league_id}")
+        return resolved
+
     async def load_extensions(self) -> None:
         """Load all cog extensions from the cogs directory."""
         cogs_dir = Path(__file__).parent / "cogs"

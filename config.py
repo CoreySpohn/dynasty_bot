@@ -26,7 +26,17 @@ def _get_required_env(key: str) -> str:
 DISCORD_TOKEN: str = _get_required_env("DISCORD_TOKEN")
 
 # Sleeper API Configuration
+#
+# SLEEPER_LEAGUE_ID is a seed and a fallback rather than the final word: Sleeper
+# mints a brand new league on every renewal, so this value goes stale annually.
+# When SLEEPER_USER_ID is set, the bot follows the renewal automatically at
+# startup by finding that user's league of the same name for the current season
+# (lib/league_resolver.py). Without it, this value is used as-is.
 SLEEPER_LEAGUE_ID: str = _get_required_env("SLEEPER_LEAGUE_ID")
+SLEEPER_USER_ID: str | None = os.getenv("SLEEPER_USER_ID") or None
+# Optional override; defaults to the configured league's own name, so a renewal
+# needs no extra configuration.
+SLEEPER_LEAGUE_NAME: str | None = os.getenv("SLEEPER_LEAGUE_NAME") or None
 SLEEPER_API_BASE_URL: str = "https://api.sleeper.app/v1"
 
 # Database Configuration
