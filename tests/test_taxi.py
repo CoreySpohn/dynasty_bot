@@ -44,8 +44,13 @@ class TestCalculateRaidCost:
     """Test suite for raid cost calculation."""
 
     def test_round_1_cost(self):
-        """Round 1 picks cost just a 1st."""
-        assert calculate_raid_cost(1) == "1st Round Pick"
+        """Round 1 costs *two* 1sts, not one.
+
+        The rules spell this case out because the general formula (an Nth plus
+        an (N-1)th) has no round above 1 to step up to: "A taxi squad player
+        drafted in the 1st round costs two 1st round picks in the next draft."
+        """
+        assert calculate_raid_cost(1) == "Two 1st Round Picks"
 
     def test_round_2_cost(self):
         """Round 2 picks cost a 1st and 2nd."""

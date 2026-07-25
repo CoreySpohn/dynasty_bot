@@ -48,24 +48,31 @@ def ordinal(n: int) -> str:
 
 def calculate_raid_cost(draft_round: int | str) -> str:
     """Calculate the raid cost based on draft round.
-    
-    Cost formula: The round drafted + (round - 1)
-    Example: Round 3 player costs a 2nd + 3rd round pick
-    
+
+    The rules (docs/Superflexers Rules.md): "a draft pick from the round the
+    player was drafted in plus a one round higher draft pick in the next
+    draft" - so round N costs an Nth and an (N-1)th.
+
+    Round 1 has no higher round to step up to, and the rules settle that case
+    explicitly: "A taxi squad player drafted in the 1st round costs two 1st
+    round picks in the next draft." This returned a single 1st until now, which
+    undercharged for raiding the most valuable players on any taxi squad.
+
     Args:
-        draft_round: The round the player was drafted, or "UDFA"
-        
+        draft_round: The round the player was drafted, or "UDFA".
+
     Returns:
-        Human-readable cost string (e.g., "2nd & 3rd")
+        Human-readable cost string (e.g. "2nd & 3rd Round Picks").
     """
     if draft_round == "UDFA" or not isinstance(draft_round, int):
-        # UDFA players cost a 4th round pick (league rule)
+        # Not in the written rules. An undrafted player can't legally occupy a
+        # taxi slot anyway - only your own rookie draftees are eligible - so
+        # this is a fallback for a player whose round we can't determine.
         return "4th Round Pick"
-    
+
     if draft_round == 1:
-        # 1st round picks just cost a 1st
-        return "1st Round Pick"
-    
+        return "Two 1st Round Picks"
+
     cost_round = draft_round - 1
     return f"{ordinal(cost_round)} & {ordinal(draft_round)} Round Picks"
 
