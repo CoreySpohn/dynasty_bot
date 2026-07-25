@@ -184,10 +184,13 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
 - **Rumor entity extraction is regex/substring based** (first name for
   owners, last name for players), not real NLP — fine for flavor, not
   bulletproof against short or common names.
-- **`config/league_state.yaml` drifts.** It's manual, and a stale
-  `current_state` silently gates the wrong set of deadline reminders. All four
-  `transitions` are still `null`: `/sync_nfl` populates them from nflreadpy but
-  has never been run.
+- **`config/league_state.yaml`'s `pre_draft` state is still manual.** The other
+  three are now derived and applied by `SchedulerCog.upkeep_loop` (see
+  `lib/league_state.py`), and NFL anchors re-sync themselves. `pre_draft`
+  can't be: the config describes it as "after rules voted", and a rules vote
+  has no API. It also isn't in `VALID_STATES`, so nothing sets it today.
+  The `transitions` block is likewise still `null` and unread by anything —
+  the derivation uses live signals instead.
 - **Zero-point starters aren't provably byes.** The shame wall reports
   "started someone who scored nothing", which is honest, rather than
   claiming BYE — Sleeper's player payload doesn't carry bye weeks reliably.
@@ -214,17 +217,25 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   clinched/eliminated could produce those sentences but doesn't.
 - **The simulation ignores the playoff bracket itself.** Odds are for
   *making* the playoffs, not winning them.
-- **The taxi addition deadline is bracketed, not exact.** The rules set it at
-  "the end of the last game of the first week of NFL preseason games", and
-  nothing available reports that moment. **nflverse publishes no preseason
-  games at all** — verified across every season it carries, 1999-2026, 7,549
-  games, all of them REG/WC/DIV/CON/SB — so `NFLScheduleClient.get_preseason_dates`
-  is always an estimate off the regular-season opener (its `PRE` branch has
-  never matched). Sleeper's `season_type` at least closes the window for
-  certain once the regular season starts, which is what `addition_window_open`
-  uses. Remaining slack: the few weeks between the real deadline and kickoff.
-  Closing it properly needs a preseason schedule source such as ESPN's API, or
-  one hardcoded date a year.
+- **The written taxi deadline contradicts the draft calendar, and needs a
+  ruling.** The rules put it at "the end of the last game of the first week of
+  NFL preseason games". That date is now fetched exactly (ESPN, via
+  `/sync_nfl` — nflverse publishes no preseason games at all), but the rookie
+  draft floats to whatever weekend owners can manage and then takes days to
+  run, 24 hours per pick. So it has repeatedly finished *after* the deadline:
+
+  | Season | Rookie draft ended | First full preseason week ended |
+  |--------|--------------------|---------------------------------|
+  | 2023   | Aug 18             | Aug 13                          |
+  | 2024   | Aug 6              | Aug 11                          |
+  | 2025   | Aug 19             | Aug 10                          |
+
+  Two of the last three years the deadline had expired before anyone could
+  draft, which cannot be what's enforced. `stored_taxi_deadline` therefore
+  refuses to apply a deadline the draft has overtaken, falling back to
+  `season_type` bracketing, and logs why. The real fix is a rules decision:
+  most likely re-anchoring the deadline to the draft's completion rather than
+  to the NFL preseason.
 - **Taxi activations before 2026-07-25 are assumed, not observed.** Sleeper
   can't tell us who was activated historically, so `/taxibackfill` records
   every own-draftee from a *past* draft class who is currently off taxi as

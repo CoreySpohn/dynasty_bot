@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import discord
 import pytz
@@ -23,8 +23,19 @@ import yaml
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from clients.espn import ESPNClient
 from clients.nfl_schedule import NFLScheduleClient
 from database import db
+from lib.league_state import derive_state, should_apply
+from lib.nfl_calendar import (
+    ANCHOR_PRESEASON_END,
+    ANCHOR_PRESEASON_START,
+    ANCHOR_ROOKIE_DRAFT_END,
+    ANCHOR_TAXI_DEADLINE,
+    preseason_bounds,
+    taxi_deadline,
+)
+from lib.taxi_rules import upcoming_season
 
 if TYPE_CHECKING:
     from main import DynastyBot
@@ -40,6 +51,17 @@ LEAGUE_STATE_PATH = CONFIG_DIR / 'league_state.yaml'
 DEADLINES_PATH = CONFIG_DIR / 'deadlines.yaml'
 PICK_VALUES_PATH = CONFIG_DIR / 'pick_values.yaml'
 
+
+
+def _parse_iso(value: Any) -> Optional[date]:
+    """Parse a stored ISO date anchor, or None if absent/malformed."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        logger.warning(f"Malformed date anchor: {value!r}")
+        return None
 
 
 class SchedulerCog(commands.Cog):
@@ -63,11 +85,13 @@ class SchedulerCog(commands.Cog):
         
         # Start the reminder loop
         self.reminder_loop.start()
+        self.upkeep_loop.start()
         logger.info("Scheduler cog initialized")
     
     def cog_unload(self):
         """Clean up when cog is unloaded."""
         self.reminder_loop.cancel()
+        self.upkeep_loop.cancel()
     
     # =========================================================================
     # Configuration Loading/Saving
@@ -163,6 +187,152 @@ class SchedulerCog(commands.Cog):
         """Wait for bot to be ready before starting loop."""
         await self.bot.wait_until_ready()
         logger.info("Reminder loop starting...")
+
+    # =========================================================================
+    # Upkeep Loop - keeps anchors and league state current without a human
+    # =========================================================================
+
+    @tasks.loop(hours=12)
+    async def upkeep_loop(self):
+        """Refresh NFL anchors and advance league state.
+
+        Both jobs used to need a commissioner to remember a slash command, and
+        both failed quietly when nobody did: `nfl_anchors` sat a year stale and
+        `current_state` gated the wrong reminders.
+
+        Twice a day is enough for either. The anchors change a few times a year
+        (schedule release, then whenever the rookie draft finally finishes), and
+        the state changes four times.
+        """
+        try:
+            await self._run_upkeep()
+        except Exception as e:
+            logger.error(f"Upkeep loop failed: {e}", exc_info=True)
+
+    @upkeep_loop.before_loop
+    async def before_upkeep_loop(self):
+        await self.bot.wait_until_ready()
+        logger.info("Upkeep loop starting...")
+
+    async def _run_upkeep(self) -> dict[str, Any]:
+        """One upkeep pass. Returns what it did, for logging and tests."""
+        season = await self._target_season()
+        result: dict[str, Any] = {
+            'season': season,
+            'anchors_synced': False,
+            'state_changed': None,
+            'state_suggested': None,
+        }
+
+        if self._anchors_need_sync(season):
+            anchors = await self._fetch_anchors(season)
+            self._store_anchors(anchors)
+            result['anchors_synced'] = True
+            logger.info(f"Upkeep synced NFL anchors for {season}")
+
+        result.update(await self._advance_state())
+        return result
+
+    def _anchors_need_sync(self, season: int) -> bool:
+        """Whether the stored anchors are missing, stale, or still incomplete.
+
+        Re-syncs while the rookie draft is unfinished, since that date is the
+        one anchor that lands unpredictably - the draft moves to whatever
+        weekend owners can manage and then takes days to play out.
+        """
+        anchors = self.deadlines_config.get('nfl_anchors') or {}
+        if not anchors:
+            return True
+
+        opener = anchors.get('nfl_regular_season_start')
+        if not opener or not str(opener).startswith(str(season)):
+            return True
+
+        # Preseason schedule may not have been published at last sync.
+        if not anchors.get(ANCHOR_TAXI_DEADLINE):
+            return True
+
+        # Draft not finished last time we looked.
+        return not anchors.get(ANCHOR_ROOKIE_DRAFT_END)
+
+    async def _advance_state(self) -> dict[str, Any]:
+        """Apply the state the observable signals imply, if it's a step forward.
+
+        Backwards moves (the in_season -> off_season wrap) are announced as a
+        suggestion instead of applied, because that transition coincides with a
+        human deciding the offseason calendar - see lib/league_state.
+        """
+        try:
+            nfl_state = await self.bot.sleeper.get_nfl_state()
+        except Exception as e:
+            logger.warning(f"Could not fetch NFL state for upkeep: {e}")
+            return {'state_changed': None, 'state_suggested': None}
+
+        season = await self._target_season()
+        anchors = self.deadlines_config.get('nfl_anchors') or {}
+        opener = _parse_iso(anchors.get('nfl_regular_season_start'))
+        draft_end = _parse_iso(anchors.get(ANCHOR_ROOKIE_DRAFT_END))
+
+        derived = derive_state(
+            nfl_state,
+            rookie_draft_complete=draft_end is not None,
+            regular_season_start=opener,
+        )
+        if derived is None or derived.state == self.current_state:
+            return {'state_changed': None, 'state_suggested': None}
+
+        if not should_apply(self.current_state, derived):
+            logger.info(
+                f"League state {self.current_state} -> {derived.state} needs "
+                f"confirmation ({derived.reason})"
+            )
+            await self._announce_state_suggestion(derived)
+            return {'state_changed': None, 'state_suggested': derived.state}
+
+        previous = self.current_state
+        self.state_config['current_state'] = derived.state
+        self.state_config.setdefault('season', {})['year'] = season
+        self._save_state()
+        logger.info(
+            f"League state advanced {previous} -> {derived.state} "
+            f"({derived.reason})"
+        )
+        await self._announce_state_change(previous, derived)
+        return {'state_changed': derived.state, 'state_suggested': None}
+
+    async def _announce_state_change(self, previous: str, derived) -> None:
+        """Tell the commissioner channel the state moved on its own."""
+        channel = self.bot.get_channel(self.alert_channel_id)
+        if not channel:
+            return
+        embed = discord.Embed(
+            title="🔄 League State Advanced",
+            description=(
+                f"**{previous.replace('_', ' ').title()}** → "
+                f"**{derived.state.replace('_', ' ').title()}**"
+            ),
+            color=discord.Color.blue(),
+        )
+        embed.add_field(name="Why", value=derived.reason, inline=False)
+        embed.set_footer(text="Automatic — override with /state")
+        await channel.send(embed=embed)
+
+    async def _announce_state_suggestion(self, derived) -> None:
+        """Ask rather than act, for transitions that need a human."""
+        channel = self.bot.get_channel(self.alert_channel_id)
+        if not channel:
+            return
+        embed = discord.Embed(
+            title="❓ League State Change Suggested",
+            description=(
+                f"Signals point to **{derived.state.replace('_', ' ').title()}**, "
+                f"but the league is in **{self.current_state.replace('_', ' ').title()}**."
+            ),
+            color=discord.Color.orange(),
+        )
+        embed.add_field(name="Why", value=derived.reason, inline=False)
+        embed.set_footer(text="Not applied automatically — use /state to confirm")
+        await channel.send(embed=embed)
     
     async def _check_and_send_reminders(self) -> None:
         """Check all deadlines and send appropriate reminders."""
@@ -645,66 +815,135 @@ class SchedulerCog(commands.Cog):
             await interaction.response.send_message(embed=embed)
             logger.info(f"League state changed: {old_state} -> {new_state.value}")
     
+    async def _target_season(self) -> int:
+        """The NFL season anchors should describe.
+
+        Sleeper's `/state/nfl` knows this outright. The month-based guess this
+        replaced (`year - 1` before September) meant that running /sync_nfl in
+        July 2026 wrote the *2025* opener and preseason - a full year stale,
+        and the reason `nfl_anchors` currently holds 2025 dates.
+        """
+        try:
+            nfl_state = await self.bot.sleeper.get_nfl_state()
+        except Exception as e:
+            logger.warning(f"Could not fetch NFL state for anchor sync: {e}")
+            nfl_state = None
+
+        try:
+            league = await self.bot.sleeper.get_league(self.bot.league_id)
+        except Exception as e:
+            logger.warning(f"Could not fetch league for anchor sync: {e}")
+            league = {}
+
+        return upcoming_season(league, nfl_state=nfl_state)
+
+    async def _rookie_draft_end(self, season: int) -> Optional[date]:
+        """The date the season's rookie draft finished, or None if unfinished.
+
+        Owners get 24 hours per pick, so a draft spans days or weeks - 2021's
+        ran Jun 19 to Jul 2. `last_picked` is therefore the only meaningful
+        completion date; `start_time` says nothing about when rosters settled.
+
+        None means "no completed draft for this season", which callers must read
+        as "the taxi window can't have closed yet" rather than as a date.
+        """
+        try:
+            drafts = await self.bot.sleeper.get_drafts(self.bot.league_id)
+        except Exception as e:
+            logger.warning(f"Could not fetch drafts for {season}: {e}")
+            return None
+
+        for draft in drafts:
+            if str(draft.get('season')) != str(season):
+                continue
+            if draft.get('status') != 'complete':
+                logger.info(
+                    f"{season} draft status is {draft.get('status')!r}, "
+                    "not complete"
+                )
+                continue
+            stamp = draft.get('last_picked') or draft.get('start_time')
+            if stamp:
+                return datetime.fromtimestamp(stamp / 1000).date()
+        return None
+
+    async def _fetch_anchors(self, season: int) -> dict[str, Optional[date]]:
+        """Collect every NFL anchor for a season, from both sources.
+
+        nflverse covers the regular season and playoffs. It publishes no
+        preseason games at all, so preseason dates and the taxi deadline that
+        depends on them come from ESPN - see `lib/nfl_calendar.py`.
+        """
+        self.nfl_client.clear_cache()
+        anchors = self.nfl_client.get_all_anchors(season)
+
+        # get_all_anchors returns the *previous* season's Super Bowl, which is
+        # the offseason anchor. This season's is the one that closes it out.
+        try:
+            current_sb = self.nfl_client.get_super_bowl_date(season)
+            if current_sb:
+                anchors['super_bowl'] = current_sb
+        except Exception as e:
+            logger.warning(f"Could not fetch {season} Super Bowl date: {e}")
+
+        # When the rookie draft actually finished. The draft floats to whatever
+        # weekend owners can make, so this can land after the preseason-derived
+        # taxi deadline - see stored_taxi_deadline, which refuses to enforce a
+        # deadline the draft has already overtaken. Re-read every sync rather
+        # than assumed, precisely because the date moves.
+        anchors[ANCHOR_ROOKIE_DRAFT_END] = await self._rookie_draft_end(season)
+
+        # Real preseason dates, replacing the estimates nflverse forces.
+        weeks = await ESPNClient(self.bot.sleeper.session).get_preseason_weeks(
+            season
+        )
+        if weeks:
+            start, end = preseason_bounds(weeks)
+            anchors[ANCHOR_PRESEASON_START] = start
+            anchors[ANCHOR_PRESEASON_END] = end
+            anchors[ANCHOR_TAXI_DEADLINE] = taxi_deadline(weeks)
+        else:
+            # Schedule not out yet. Leave the estimates from nflverse in place
+            # but don't invent a deadline off them - an absent taxi deadline
+            # makes the taxi cog fall back to season_type, which is honest.
+            logger.info(f"No ESPN preseason schedule for {season} yet")
+            anchors.setdefault(ANCHOR_TAXI_DEADLINE, None)
+
+        return anchors
+
+    def _store_anchors(self, anchors: dict[str, Optional[date]]) -> None:
+        """Write anchors to deadlines.yaml as ISO dates."""
+        self.deadlines_config['nfl_anchors'] = {
+            k: v.isoformat() if v else None
+            for k, v in anchors.items()
+        }
+        self._save_deadlines()
+
     @app_commands.command(name="sync_nfl")
     @app_commands.describe(
-        year="NFL season year to sync (defaults to most relevant season based on current date)"
+        year="NFL season year to sync (defaults to the season being prepared for)"
     )
     async def sync_nfl_schedule(
-        self, 
+        self,
         interaction: discord.Interaction,
         year: Optional[int] = None
     ):
-        """Sync deadline dates with NFL schedule from nflreadpy.
-        
-        If no year is specified, syncs the most relevant data:
-        - For off-season (Jan-Aug): fetches current NFL season for Super Bowl and next season for preseason/regular
-        - For in-season (Sep-Dec): fetches current NFL season
+        """Sync deadline anchors from the NFL schedule.
+
+        Regular season and playoffs come from nflreadpy; preseason dates and
+        the taxi deadline come from ESPN, which is the only source that
+        publishes them. Both are released once a year, so this only needs
+        running annually - and `upkeep_loop` now does it automatically.
         """
         await interaction.response.defer()
-        
+
         try:
-            # Clear cache to get fresh data
-            self.nfl_client.clear_cache()
-            
-            # Determine which seasons to fetch
-            now = datetime.now()
-            
-            if year:
-                # User specified a year - fetch that season's data
-                season = year
-                anchors = self.nfl_client.get_all_anchors(season)
-                season_label = f"{season}"
-            else:
-                # Auto-detect based on current month
-                # NFL season runs Sep-Feb, so:
-                # - Jan-Aug: we're in the "off-season" of the previous NFL year
-                # - Sep-Dec: we're in the current NFL year
-                if now.month <= 8:
-                    # Off-season: current calendar year's Super Bowl is from previous NFL season
-                    # e.g., in Jan 2026, Super Bowl LX (Feb 2026) is from 2025 NFL season
-                    nfl_season = now.year - 1
-                else:
-                    # In-season
-                    nfl_season = now.year
-                
-                # Fetch anchors for this NFL season
-                anchors = self.nfl_client.get_all_anchors(nfl_season)
-                
-                # For Super Bowl, we want the CURRENT nfl_season's Super Bowl
-                # get_all_anchors fetches previous season's SB, so we need to get current
-                current_sb = self.nfl_client.get_super_bowl_date(nfl_season)
-                if current_sb:
-                    anchors['super_bowl'] = current_sb
-                
-                season_label = f"{nfl_season} NFL season"
-            
-            # Update anchors in config
-            self.deadlines_config['nfl_anchors'] = {
-                k: v.isoformat() if v else None 
-                for k, v in anchors.items()
-            }
-            self._save_deadlines()
-            
+            season = year or await self._target_season()
+            anchors = await self._fetch_anchors(season)
+            season_label = f"{season} NFL season"
+
+            self._store_anchors(anchors)
+
             embed = discord.Embed(
                 title="🏈 NFL Schedule Synced",
                 description=f"Updated anchors from **{season_label}**:",

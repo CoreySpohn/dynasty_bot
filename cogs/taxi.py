@@ -6,7 +6,7 @@ the player's original draft round.
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
 import discord
@@ -16,6 +16,7 @@ from discord.ext import commands, tasks
 from config import ALERT_CHANNEL_ID, SLEEPER_LEAGUE_ID
 from database import db
 from lib.members import get_member_registry
+from lib.nfl_calendar import stored_taxi_deadline
 from lib.results import get_league_chain
 from lib.taxi_rules import (
     TAXI_MAX_SEASONS,
@@ -603,6 +604,11 @@ class TaxiRaiding(commands.Cog):
         draft_index = await self._draft_index()
         traded_for, activated = await self._ledger()
 
+        # The real deadline if /sync_nfl has fetched this season's preseason,
+        # otherwise None and addition_window_open falls back to season_type.
+        season = upcoming_season(league, nfl_state=nfl_state)
+        deadline = stored_taxi_deadline(season)
+
         return {
             "league": league,
             "rosters": rosters,
@@ -615,16 +621,33 @@ class TaxiRaiding(commands.Cog):
             },
             # The season being prepared for, which is not always the one the
             # league itself reports - see upcoming_season.
-            "season": upcoming_season(league, nfl_state=nfl_state),
+            "season": season,
             "league_season": int(league.get("season") or 0),
-            "window_open": addition_window_open(nfl_state),
+            "window_open": addition_window_open(nfl_state, deadline),
             "season_type": (nfl_state or {}).get("season_type"),
+            "deadline": deadline,
             "taxi_slots": league.get("settings", {}).get("taxi_slots", 5),
             "records": build_records(rosters, draft_index, traded_for, activated),
         }
 
     def _player_name(self, players: dict, player_id: str) -> str:
         return (players.get(player_id) or {}).get("full_name") or player_id
+
+    @staticmethod
+    def _deadline_text(ctx: dict) -> str:
+        """The deadline line, exact once /sync_nfl has fetched the preseason."""
+        deadline = ctx.get("deadline")
+        if not deadline:
+            return (
+                "Deadline: end of the last game of the first week of NFL "
+                "preseason — run `/sync_nfl` for the exact date."
+            )
+        days = (deadline - date.today()).days
+        if days > 0:
+            return f"Deadline: {deadline:%B %-d, %Y} — {days} day(s) left."
+        if days == 0:
+            return f"Deadline: {deadline:%B %-d, %Y} — **today**."
+        return f"Deadline was {deadline:%B %-d, %Y}."
 
     @staticmethod
     def _nobody_reason(ctx: dict, drafted_this_year: bool) -> str:
@@ -634,6 +657,11 @@ class TaxiRaiding(commands.Cog):
         them are normal and one means "check back later".
         """
         if not ctx["window_open"]:
+            if ctx.get("deadline"):
+                return (
+                    f"The deadline passed on **{ctx['deadline']:%B %-d, %Y}** — "
+                    "the end of the first week of NFL preseason games."
+                )
             return (
                 "The deadline has passed for this season — taxi decisions are "
                 "due by the end of the first week of NFL preseason games, and "
@@ -799,8 +827,7 @@ class TaxiRaiding(commands.Cog):
                     f"now: **{ctx['season']} rookie-draft picks of your own**, "
                     "never activated. Players from earlier drafts can stay on a "
                     f"slot up to {TAXI_MAX_SEASONS} seasons, but can no longer "
-                    "be added.\n*Deadline: end of the last game of the first "
-                    "week of NFL preseason.*"
+                    f"be added.\n*{self._deadline_text(ctx)}*"
                 ),
                 color=discord.Color.blue(),
             )

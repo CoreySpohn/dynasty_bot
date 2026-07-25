@@ -108,7 +108,7 @@ class NFLScheduleClient:
         Note:
             **These are always estimates.** nflverse publishes no preseason
             games at all - verified across every season it carries (1999-2026,
-            7,549 games): each one is REG, WC, DIV, CON or SB. The `PRE` branch
+            7,548 games): each one is REG, WC, DIV, CON or SB. The `PRE` branch
             below has therefore never matched, and is kept only in case
             nflverse starts publishing them.
 

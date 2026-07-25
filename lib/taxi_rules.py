@@ -109,22 +109,28 @@ def upcoming_season(
     return max(season + 1, today.year)
 
 
-def addition_window_open(nfl_state: Optional[dict[str, Any]]) -> bool:
-    """Whether taxi slots can still be filled at all right now.
+def addition_window_open(
+    nfl_state: Optional[dict[str, Any]],
+    deadline: Optional[date] = None,
+    today: Optional[date] = None,
+) -> bool:
+    """Whether taxi slots can still be filled right now.
 
     The rules put the deadline at "the end of the last game of the first week
-    of NFL preseason games". Nothing available says when that is - nflverse
-    publishes no preseason games at all (verified across 1999-2026: every game
-    is REG, WC, DIV, CON or SB), so the schedule can only estimate it.
+    of NFL preseason games". Two sources, in order of preference:
 
-    Sleeper's `season_type` does bracket it, though: once the regular season
-    starts the window is unambiguously shut. That turns a rule the bot used to
-    ignore for a whole calendar year into one it gets right except for the few
-    weeks between the real deadline and the season opener.
+    1. `deadline` - the real date, fetched from ESPN once a year and stored by
+       `/sync_nfl`. See `lib/nfl_calendar.py`. Exact, so use it when present.
+    2. Sleeper's `season_type`, which only brackets the window: once the
+       regular season starts it is unambiguously shut. Right for all but the
+       few weeks between the real deadline and the season opener.
 
-    Unknown state returns True - better to show additions that may be a few
+    Both unavailable returns True. Better to show additions that may be a few
     weeks stale than to hide legal moves during the window that matters.
     """
+    if deadline is not None:
+        return (today or date.today()) <= deadline
+
     if not nfl_state:
         return True
     season_type = nfl_state.get("season_type")

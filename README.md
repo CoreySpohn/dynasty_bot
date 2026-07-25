@@ -100,13 +100,39 @@ The **current** draft class is exempt. Rookies land on the bench straight out of
 
 `upcoming_season` decides which season to judge against, because a league's own `season` field keeps reporting the season that just finished until the commissioner creates the next one. Reading it directly meant that in July 2026 the bot audited against the 2025 deadline — a year in the past — and offered up the 2025 draft class as addable long after that window shut. It prefers Sleeper's `/state/nfl` (`league_season`), which knows the answer outright, and falls back to a calendar nudge only if that call fails.
 
-The addition **deadline** is the one thing no source reports. nflverse publishes no preseason games at all — 1999–2026, 7,549 games, every one `REG`/`WC`/`DIV`/`CON`/`SB` — so schedule-derived preseason dates are always estimates. `addition_window_open` uses Sleeper's `season_type` instead, which at least shuts the window for certain once the regular season begins.
+The addition **deadline** takes three sources to get right. nflverse publishes no preseason games at all — 1999–2026, 7,548 games, every one `REG`/`WC`/`DIV`/`CON`/`SB` — so ESPN supplies the preseason schedule, fetched once a year by `/sync_nfl` and stored in `config/deadlines.yaml`. ESPN numbers the Hall of Fame Game as preseason week 1 by itself, so `first_full_week` skips to the first week every team plays; pinning a league-wide roster deadline to one exhibition game would cost owners nine days.
+
+Then a guard: the rookie draft floats to whatever weekend owners can manage and runs 24 hours per pick, so it has finished *after* that deadline in two of the last three years (2025 draft ended Aug 19, preseason week 1 ended Aug 10). `stored_taxi_deadline` refuses to enforce a deadline the draft has overtaken — or one from a season whose draft hasn't finished — and falls back to `season_type` bracketing. A deadline that expires before the draft that fills the slots isn't a deadline the bot should act on.
 
 **How it works:**
 - Cost = Draft round + (round - 1) in picks
 - Round 3 player = 2nd + 3rd round picks
 - UDFA = 4th round pick
 - Victim gets tagged and reminded daily until resolved
+
+---
+
+### 🗓️ Schedule & League State
+
+| Command | Description |
+|---------|-------------|
+| `/sync_nfl [year]` | Refresh NFL date anchors (regular season, playoffs, preseason, taxi deadline) |
+| `/state [new_state]` | View or override the league state |
+
+**Both of these now run themselves.** `SchedulerCog.upkeep_loop` ticks every 12 hours and:
+
+1. **Re-syncs NFL anchors** when they're missing, from the wrong season, or still incomplete — the last case matters because the rookie draft date isn't knowable in advance, so it keeps checking until the draft finishes.
+2. **Advances the league state** from live signals rather than a remembered slash command, announcing each change to the commissioner channel with its reason.
+
+| State | What decides it |
+|-------|-----------------|
+| `in_season` | NFL `season_type` is regular/post, or we're within a day of the opener |
+| `pre_season` | NFL preseason started, or this year's rookie draft finished |
+| `off_season` | Otherwise |
+
+Two deliberate limits. It **only moves forward** — the `in_season → off_season` wrap is announced as a suggestion, because that transition is exactly when a human is deciding the offseason calendar and resetting it underneath them would be worse than waiting. And `pre_draft` is never derived: the config defines it as "after rules voted", which has no API, and it isn't in `VALID_STATES` anyway.
+
+Before this, the auto-detect in `/sync_nfl` guessed the season from the calendar month (`year - 1` before September), so running it in July 2026 wrote the **2025** opener and preseason — which is exactly what was sitting in `deadlines.yaml`. It now asks Sleeper.
 
 ---
 
@@ -367,14 +393,17 @@ dynasty_bot/
 │   ├── projections.py        # Predictions, playoff odds, sacko watch
 │   ├── history.py            # All-time head-to-head, championship rings
 │   ├── responses.py          # Random responses
-│   ├── scheduler.py          # Reminders
+│   ├── scheduler.py          # Reminders, NFL anchor sync, state automation
 │   └── ...
 ├── clients/                  # External API clients
 │   ├── sleeper.py            # Sleeper API
 │   ├── keeptradecut.py       # KeepTradeCut dynasty values
-│   ├── nfl_schedule.py       # NFL schedule (nflreadpy)
+│   ├── nfl_schedule.py       # NFL regular season/playoffs (nflreadpy)
+│   ├── espn.py               # NFL preseason schedule (nflverse has none)
 │   └── odds.py               # The Odds API
 ├── lib/                      # Shared utilities
+│   ├── nfl_calendar.py       # Preseason weeks, taxi deadline + its guards
+│   ├── league_state.py       # Derives off_season/pre_season/in_season
 │   ├── results.py            # Weekly results derivation (the shared layer)
 │   ├── projections.py        # Scoring model, win probability, simulation
 │   ├── members.py            # Member registry
