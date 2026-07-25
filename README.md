@@ -100,19 +100,19 @@ The **current** draft class is exempt. Rookies land on the bench straight out of
 
 `upcoming_season` decides which season to judge against, because a league's own `season` field keeps reporting the season that just finished until the commissioner creates the next one. Reading it directly meant that in July 2026 the bot audited against the 2025 deadline — a year in the past — and offered up the 2025 draft class as addable long after that window shut. It prefers Sleeper's `/state/nfl` (`league_season`), which knows the answer outright, and falls back to a calendar nudge only if that call fails.
 
-The addition **deadline** takes three sources to get right. nflverse publishes no preseason games at all — 1999–2026, 7,548 games, every one `REG`/`WC`/`DIV`/`CON`/`SB` — so ESPN supplies the preseason schedule, fetched once a year by `/sync_nfl` and stored in `config/deadlines.yaml`. ESPN numbers the Hall of Fame Game as preseason week 1 by itself, so `first_full_week` skips to the first week every team plays; pinning a league-wide roster deadline to one exhibition game would cost owners nine days.
+The addition **deadline** is **the start of the regular season** — one day before kickoff, so a move made on kickoff day after games began can't count (`TAXI_DEADLINE_DAYS_BEFORE_OPENER`).
 
-Then a reconciliation, because the written deadline doesn't survive contact with the draft calendar. The rookie draft floats to whatever weekend owners can manage and runs 24 hours per pick, so it has finished **after** the written deadline in two of the last three years:
+It used to be derived from the preseason schedule, matching the older written rule, and that was changed because it didn't survive contact with the draft calendar. The rookie draft goes to whatever weekend owners can make and then runs 24 hours per pick, so it kept finishing **after** the deadline:
 
-| Season | Rookie draft ended | Written deadline | Enforced |
-|---|---|---|---|
-| 2023 | Aug 18 | Aug 13 | Aug 21 |
-| 2024 | Aug 6 | Aug 11 | **Aug 11** (written rule holds) |
-| 2025 | Aug 19 | Aug 10 | Aug 22 |
+| Season | Rookie draft ended | Old preseason deadline |
+|---|---|---|
+| 2023 | Aug 18 | Aug 13 |
+| 2024 | Aug 6 | Aug 11 |
+| 2025 | Aug 19 | Aug 10 |
 
-`effective_taxi_deadline` takes the later of the written date and `TAXI_DEADLINE_GRACE_DAYS` (3) after the final pick, clamped to before the regular-season opener. The grace is deliberately short so the written rule still binds whenever it's workable — 2024 lands on Aug 11 either way. At 7 days even 2024 would shift, which would quietly replace the written rule every year instead of rescuing it in the years it breaks.
+Two of three years the deadline had expired before anyone could draft. Anchoring to the regular season removes the whole class of problem: the draft has never run past early September, and nflverse publishes the opener months ahead, so no preseason source is needed and there's no reconciliation to get wrong.
 
-The deadline is still not enforced at all until the season's draft is **complete**, since the window exists to stash the picks you just made and can't close before they exist. That's the live 2026 state, and it's why `/taxieligible` currently reports the window open.
+The preseason dates are still fetched from ESPN and stored, because nflverse carries no preseason games at all (1999–2026, 7,548 games, every one `REG`/`WC`/`DIV`/`CON`/`SB`) — but nothing depends on them now. They're informational `/sync_nfl` output.
 
 **How it works:**
 - Cost = Draft round + (round - 1) in picks

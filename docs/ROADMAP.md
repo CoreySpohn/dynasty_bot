@@ -230,13 +230,11 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   clinched/eliminated could produce those sentences but doesn't.
 - **The simulation ignores the playoff bracket itself.** Odds are for
   *making* the playoffs, not winning them.
-- **The taxi deadline rule is a bot interpretation, not a ratified rule.** The
-  written deadline ("end of the last game of the first week of NFL preseason
-  games") expired before the rookie draft finished in 2023 and 2025, so
-  `effective_taxi_deadline` takes the later of it and
-  `TAXI_DEADLINE_GRACE_DAYS` (3) after the final pick. That keeps the written
-  rule binding whenever it's workable, but the grace period is a number the bot
-  chose - it wants league sign-off, and it's a one-constant change.
+- **The preseason schedule now has no consumer.** The taxi deadline moved to the
+  start of the regular season, and nothing in `deadlines.yaml` references
+  `nfl_preseason_start`/`_end`, so `clients/espn.py` exists only to populate two
+  informational anchors. Kept because it's cheap, tested, and the dates are
+  useful to see - but it's the first thing to delete if that stops being true.
 - **Taxi activations before 2026-07-25 are assumed, not observed.** Sleeper
   can't tell us who was activated historically, so `/taxibackfill` records
   every own-draftee from a *past* draft class who is currently off taxi as

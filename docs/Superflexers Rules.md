@@ -4,12 +4,12 @@
 
 The purpose of this document is to establish a fun, fair, and viable league. If a rule is not explicitly stated, interpretations will consider these criteria and new rules will be voted on and documented here.
 
-* 12 teams playing a 13 game regular season with 3 weeks of playoffs  
+* 12 teams playing a 14 game regular season with 3 weeks of playoffs  
 * 29 roster spots  
 * 5 taxi squad spots  
 * 11 starters: 1QB, 2RB, 3WR, 1TE, 2FLEX, 1SUPERFLEX, 1K  
-* A 5 round supplemental draft completed before the start of the preseason  
-* Supplemental picks determined by optimal lineup points  
+* A 5 round annual rookie draft  
+* Rookie draft order determined by money won, then by optimal lineup points  
 * Continuous free agent auction budget. Waivers process at noon everyday, except Mondays of weeks that have games.  
 * Payout for playoffs and total points.  
 * In order to draft you must pay the $10 league dues.  
@@ -79,7 +79,9 @@ Other owners can claim a player from your taxi squad by offering a trade of the 
 
 Claiming will not be in place until the 2020 season due to us not having a rookie specific draft.  
 
-Taxi squad decisions must be made by the end of the last game of the first week of NFL preseason games.
+Taxi squad decisions must be made by the start of the regular season.
+
+*Changed from "the end of the last game of the first week of NFL preseason games" because that was painful to manage — the rookie draft moves to whatever weekend owners can make and then runs 24 hours per pick, so it repeatedly finished after the old deadline (2023 and 2025 both), leaving a deadline that had expired before anyone could draft.*
 
 ## Commissioner clarification
 
@@ -87,9 +89,9 @@ Posted in Discord, and the reading the bot implements (`lib/taxi_rules.py`):
 
 > So it seems like sleeper doesn't have a way to actually enforce the taxi squad rules so I'll be checking manually. As a reminder, the only players you can put on your taxi during an off-season are players you took in the rookie draft **that off-season** (so no free agent pick ups). Once they're taken off they can't be put back, and once they are in **year 4** they must be taken off.
 
-### Open: the deadline vs. the draft date
+### Why the deadline moved to the start of the regular season
 
-The written deadline above ("the end of the last game of the first week of NFL preseason games") has **expired before the rookie draft finished** in two of the last three years, because the draft floats to whatever weekend owners can manage and then runs 24 hours per pick:
+For the record, since the bot's implementation history reflects it. Under the old preseason-relative deadline the rookie draft had **finished after the deadline** in two of the last three years:
 
 | Season | Rookie draft ended | First full preseason week ended |
 |--------|--------------------|---------------------------------|
@@ -97,7 +99,7 @@ The written deadline above ("the end of the last game of the first week of NFL p
 | 2024   | Aug 6              | Aug 11                          |
 | 2025   | Aug 19             | Aug 10                          |
 
-Pending a league decision, the bot enforces **the later of the written deadline and 3 days after the final rookie pick**, never past the regular-season opener. That leaves the written rule in force in years like 2024 and only extends it when the draft has overtaken it. This is `TAXI_DEADLINE_GRACE_DAYS` in `lib/nfl_calendar.py` and wants ratifying (or changing) rather than being left as a bot default.
+A deadline that expires before the draft that fills the slots can't be enforced, which is what made the old rule painful to manage. The regular-season start removes the problem entirely: the draft has never run past early September, and nflverse publishes the opener months ahead so the date needs no preseason source. The bot uses `TAXI_DEADLINE_DAYS_BEFORE_OPENER` in `lib/nfl_calendar.py` — one day, so that a move made on kickoff day after games began can't count.
 
 ### Settled by the commissioner
 
@@ -116,7 +118,9 @@ $200 is awarded to every team immediately after the draft.
 
 Kohl’s Cash is tradeable.
 
-They will open at 3 am a day or two after the supplemental draft and close after the league championship.
+They will open at 3 am a day or two after the rookie draft and close after the league championship.
+
+*The league originally ran a separate supplemental draft, in which non-rookies on waivers were fair game. That was voted out, so references to it now mean the annual rookie draft.*
 
 If for some unforeseen reason a player is taken outside of that time period the transaction will be undone.
 

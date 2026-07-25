@@ -32,11 +32,9 @@ from lib.nfl_calendar import (
     ANCHOR_PRESEASON_END,
     ANCHOR_PRESEASON_START,
     ANCHOR_ROOKIE_DRAFT_END,
-    ANCHOR_TAXI_DEADLINE,
     load_anchors,
     preseason_bounds,
     save_anchors,
-    taxi_deadline,
 )
 from lib.taxi_rules import upcoming_season
 
@@ -252,7 +250,7 @@ class SchedulerCog(commands.Cog):
         if not opener or not str(opener).startswith(str(season)):
             return False
         # Preseason schedule may not have been published at last sync.
-        return bool(anchors.get(ANCHOR_TAXI_DEADLINE))
+        return bool(anchors.get(ANCHOR_PRESEASON_START))
 
     def _only_draft_date_missing(self, season: int) -> bool:
         """Whether the sole gap is the rookie draft end date."""
@@ -458,8 +456,11 @@ class SchedulerCog(commands.Cog):
         # Relative to NFL anchor
         relative_to = deadline.get('relative_to')
         if relative_to:
-            anchors = self.deadlines_config.get('nfl_anchors', {})
-            anchor_date_str = anchors.get(relative_to)
+            # self.nfl_anchors, not deadlines_config: generated dates live in
+            # their own file now. Reading the old location silently resolved
+            # every anchor-relative deadline to None, which disabled seven
+            # reminders without erroring.
+            anchor_date_str = (self.nfl_anchors or {}).get(relative_to)
             
             if anchor_date_str:
                 try:
@@ -470,7 +471,7 @@ class SchedulerCog(commands.Cog):
                     pass
         
         # Relative to another deadline (e.g., rookie_draft)
-        if relative_to and relative_to not in self.deadlines_config.get('nfl_anchors', {}):
+        if relative_to and relative_to not in (self.nfl_anchors or {}):
             # Find the referenced deadline
             for other in self.deadlines_config.get('deadlines', []):
                 if other.get('id') == relative_to:
@@ -905,14 +906,20 @@ class SchedulerCog(commands.Cog):
         except Exception as e:
             logger.warning(f"Could not fetch {season} Super Bowl date: {e}")
 
-        # When the rookie draft actually finished. The draft floats to whatever
-        # weekend owners can make, so this can land after the preseason-derived
-        # taxi deadline - see stored_taxi_deadline, which refuses to enforce a
-        # deadline the draft has already overtaken. Re-read every sync rather
-        # than assumed, precisely because the date moves.
+        # When the rookie draft actually finished. Re-read every sync rather
+        # than assumed, because the date moves: the draft goes to whatever
+        # weekend owners can make and then runs 24 hours per pick. It also
+        # drives the league state (a completed draft means pre_season).
         anchors[ANCHOR_ROOKIE_DRAFT_END] = await self._rookie_draft_end(season)
 
-        # Real preseason dates, replacing the estimates nflverse forces.
+        # No taxi deadline anchor: it's the regular-season opener minus a day,
+        # so storing it would duplicate a value already here and let the copy go
+        # stale. stored_taxi_deadline derives it.
+
+        # Preseason dates are informational only now that the taxi deadline no
+        # longer depends on them - nothing in deadlines.yaml references them.
+        # Fetched anyway because nflverse carries no preseason games at all and
+        # they're useful for the commissioner to see.
         weeks = await ESPNClient(self.bot.sleeper.session).get_preseason_weeks(
             season
         )
@@ -920,13 +927,8 @@ class SchedulerCog(commands.Cog):
             start, end = preseason_bounds(weeks)
             anchors[ANCHOR_PRESEASON_START] = start
             anchors[ANCHOR_PRESEASON_END] = end
-            anchors[ANCHOR_TAXI_DEADLINE] = taxi_deadline(weeks)
         else:
-            # Schedule not out yet. Leave the estimates from nflverse in place
-            # but don't invent a deadline off them - an absent taxi deadline
-            # makes the taxi cog fall back to season_type, which is honest.
             logger.info(f"No ESPN preseason schedule for {season} yet")
-            anchors.setdefault(ANCHOR_TAXI_DEADLINE, None)
 
         return anchors
 
