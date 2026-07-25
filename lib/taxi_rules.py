@@ -70,25 +70,67 @@ ACTIVE_LEAGUE_STATUSES = frozenset(
 )
 
 
-def upcoming_season(league: dict[str, Any], today: Optional[date] = None) -> int:
+# Sleeper's `/state/nfl` season_type values during which a taxi slot may still
+# be filled. The league deadline is "the end of the last game of the first week
+# of NFL preseason games", so anything from "regular" onwards is definitely too
+# late; "off" and "pre" bracket the window.
+ADDITION_WINDOW_SEASON_TYPES = frozenset({"off", "pre"})
+
+
+def upcoming_season(
+    league: dict[str, Any],
+    today: Optional[date] = None,
+    nfl_state: Optional[dict[str, Any]] = None,
+) -> int:
     """The season the league is currently playing or preparing for.
 
     Every taxi question is asked *about a season*: whether a slot may be filled
-    from that year's draft, and whether a player has aged out by then. Sleeper's
-    `season` field can't answer it alone, because a completed league keeps
-    reporting the season that just finished until the commissioner creates the
-    next one. Reading it directly means that in July 2026 the bot judges taxi
-    squads against 2025 - a deadline a year in the past.
+    from that year's draft, and whether a player has aged out by then. The
+    league's own `season` field can't answer it, because a completed league
+    keeps reporting the season that just finished until the commissioner
+    creates the next one. Reading it directly means that in July 2026 the bot
+    judges taxi squads against 2025 - a deadline a year in the past.
 
-    So: use Sleeper's season while that season is live, and otherwise the next
-    one, which is at least the current calendar year.
+    Sleeper's `/state/nfl` answers it directly with `league_season`, which is
+    the season leagues are currently on regardless of what any one league says.
+    Prefer it; fall back to the league plus a calendar-year nudge when state
+    isn't available, so this stays a pure function that tests can drive.
     """
+    if nfl_state:
+        league_season = nfl_state.get("league_season") or nfl_state.get("season")
+        if league_season:
+            return int(league_season)
+
     today = today or date.today()
     season = int(league.get("season") or 0)
 
     if league.get("status") in ACTIVE_LEAGUE_STATUSES:
         return season
     return max(season + 1, today.year)
+
+
+def addition_window_open(nfl_state: Optional[dict[str, Any]]) -> bool:
+    """Whether taxi slots can still be filled at all right now.
+
+    The rules put the deadline at "the end of the last game of the first week
+    of NFL preseason games". Nothing available says when that is - nflverse
+    publishes no preseason games at all (verified across 1999-2026: every game
+    is REG, WC, DIV, CON or SB), so the schedule can only estimate it.
+
+    Sleeper's `season_type` does bracket it, though: once the regular season
+    starts the window is unambiguously shut. That turns a rule the bot used to
+    ignore for a whole calendar year into one it gets right except for the few
+    weeks between the real deadline and the season opener.
+
+    Unknown state returns True - better to show additions that may be a few
+    weeks stale than to hide legal moves during the window that matters.
+    """
+    if not nfl_state:
+        return True
+    season_type = nfl_state.get("season_type")
+    if not season_type:
+        return True
+    return season_type in ADDITION_WINDOW_SEASON_TYPES
 
 
 class Acquisition(str, Enum):
@@ -388,14 +430,21 @@ def presumed_activated(record: TaxiRecord, season: int) -> bool:
 
 
 def eligible_additions(
-    records: Iterable[TaxiRecord], season: int
+    records: Iterable[TaxiRecord], season: int, window_open: bool = True
 ) -> list[TaxiRecord]:
     """Players an owner could legally move onto their taxi squad now.
 
     Excludes anyone already occupying a slot, since the question being asked
     is what could be *added*. Uses `evaluate_addition`, so outside a draft
     off-season this is empty by design rather than by accident.
+
+    Args:
+        window_open: False once the addition deadline has passed for the season
+            - see `addition_window_open`. Callers with access to Sleeper's NFL
+            state should pass it; the default keeps this usable without.
     """
+    if not window_open:
+        return []
     return [
         record
         for record in records

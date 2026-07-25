@@ -20,6 +20,7 @@ from lib.results import get_league_chain
 from lib.taxi_rules import (
     TAXI_MAX_SEASONS,
     Acquisition,
+    addition_window_open,
     audit,
     build_draft_index,
     build_records,
@@ -589,6 +590,16 @@ class TaxiRaiding(commands.Cog):
         users = await self.bot.sleeper.get_users(self.league_id)
         players = await self.bot.sleeper.get_all_players()
 
+        # Sleeper's global NFL state knows the season and whether we're in the
+        # offseason/preseason, neither of which a finished league can tell us.
+        try:
+            nfl_state = await self.bot.sleeper.get_nfl_state()
+        except Exception as e:
+            # Not fatal: upcoming_season and addition_window_open both degrade
+            # to their league-only behaviour.
+            logger.warning(f"Could not fetch NFL state, falling back: {e}")
+            nfl_state = None
+
         draft_index = await self._draft_index()
         traded_for, activated = await self._ledger()
 
@@ -602,16 +613,42 @@ class TaxiRaiding(commands.Cog):
                 }.get(r.get("owner_id", ""), f"Team {r['roster_id']}")
                 for r in rosters
             },
-            # The season being prepared for, which is not always the one
-            # Sleeper reports - see upcoming_season.
-            "season": upcoming_season(league),
+            # The season being prepared for, which is not always the one the
+            # league itself reports - see upcoming_season.
+            "season": upcoming_season(league, nfl_state=nfl_state),
             "league_season": int(league.get("season") or 0),
+            "window_open": addition_window_open(nfl_state),
+            "season_type": (nfl_state or {}).get("season_type"),
             "taxi_slots": league.get("settings", {}).get("taxi_slots", 5),
             "records": build_records(rosters, draft_index, traded_for, activated),
         }
 
     def _player_name(self, players: dict, player_id: str) -> str:
         return (players.get(player_id) or {}).get("full_name") or player_id
+
+    @staticmethod
+    def _nobody_reason(ctx: dict, drafted_this_year: bool) -> str:
+        """Why `/taxieligible` came back empty.
+
+        Three genuinely different reasons, and saying which one matters: two of
+        them are normal and one means "check back later".
+        """
+        if not ctx["window_open"]:
+            return (
+                "The deadline has passed for this season — taxi decisions are "
+                "due by the end of the first week of NFL preseason games, and "
+                f"the NFL is now in its **{ctx['season_type']}** phase."
+            )
+        if not drafted_this_year:
+            return (
+                f"No {ctx['season']} rookie draft has happened yet, so there is "
+                "nobody who could legally be added. This will populate once "
+                "that draft is in Sleeper."
+            )
+        return (
+            f"Every own pick from the {ctx['season']} draft is already on a "
+            "taxi slot or has been activated."
+        )
 
     @app_commands.command(
         name="taxiaudit",
@@ -723,7 +760,9 @@ class TaxiRaiding(commands.Cog):
         await interaction.response.defer()
         try:
             ctx = await self._taxi_context()
-            eligible = eligible_additions(ctx["records"], ctx["season"])
+            eligible = eligible_additions(
+                ctx["records"], ctx["season"], window_open=ctx["window_open"]
+            )
             drafted_this_year = any(
                 r.draft_season == ctx["season"] for r in ctx["records"]
             )
@@ -777,15 +816,7 @@ class TaxiRaiding(commands.Cog):
             else:
                 embed.add_field(
                     name="Nobody",
-                    value=(
-                        f"No {ctx['season']} rookie draft has happened yet, so "
-                        "there is nobody who could legally be added. This will "
-                        "populate once that draft is in Sleeper."
-                        if not drafted_this_year
-                        else "Every own pick from the "
-                        f"{ctx['season']} draft is already on a taxi slot or "
-                        "has been activated."
-                    ),
+                    value=self._nobody_reason(ctx, drafted_this_year),
                     inline=False,
                 )
             await interaction.followup.send(embed=embed)

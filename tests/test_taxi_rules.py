@@ -13,6 +13,7 @@ from lib.taxi_rules import (
     Acquisition,
     Ineligible,
     TaxiRecord,
+    addition_window_open,
     audit,
     build_draft_index,
     build_records,
@@ -65,6 +66,49 @@ class TestUpcomingSeason:
         league = {"season": "2024", "status": "complete"}
 
         assert upcoming_season(league, date(2026, 7, 25)) == 2026
+
+
+class TestUpcomingSeasonFromNflState:
+    """Sleeper's /state/nfl knows the season outright, so it beats guessing."""
+
+    STALE_LEAGUE = {"season": "2025", "status": "complete"}
+
+    def test_prefers_nfl_state_over_the_league(self):
+        state = {"league_season": "2026", "season": "2026", "season_type": "off"}
+
+        assert upcoming_season(self.STALE_LEAGUE, date(2026, 7, 25), state) == 2026
+
+    def test_nfl_state_wins_even_against_the_calendar(self):
+        """January 2027, but the NFL still considers it the 2026 season."""
+        state = {"league_season": "2026", "season": "2026", "season_type": "post"}
+
+        assert upcoming_season(self.STALE_LEAGUE, date(2027, 1, 10), state) == 2026
+
+    def test_falls_back_to_season_when_league_season_missing(self):
+        assert upcoming_season(self.STALE_LEAGUE, date(2026, 7, 25), {"season": "2026"}) == 2026
+
+    def test_falls_back_to_the_league_when_state_is_unusable(self):
+        for state in (None, {}, {"season_type": "off"}):
+            assert upcoming_season(self.STALE_LEAGUE, date(2026, 7, 25), state) == 2026
+
+
+class TestAdditionWindowOpen:
+    """The real deadline is a preseason game time nothing exposes, but
+    season_type at least brackets it."""
+
+    def test_open_in_the_offseason_and_preseason(self):
+        assert addition_window_open({"season_type": "off"}) is True
+        assert addition_window_open({"season_type": "pre"}) is True
+
+    def test_shut_once_the_season_starts(self):
+        assert addition_window_open({"season_type": "regular"}) is False
+        assert addition_window_open({"season_type": "post"}) is False
+
+    def test_unknown_state_stays_open(self):
+        """Permissive on missing data: showing a stale addition is recoverable,
+        hiding a legal one during the real window is not."""
+        for state in (None, {}, {"season_type": None}):
+            assert addition_window_open(state) is True
 
 
 class TestEvaluate:
@@ -373,3 +417,10 @@ class TestEligibleAdditions:
         ]
 
         assert eligible_additions(records, 2026) == []
+
+    def test_closed_window_excludes_even_this_years_class(self):
+        """Mid-season: the draft class is right, but the deadline is long gone."""
+        records = [_record(player_id="rookie", on_taxi=False, draft_season=2026)]
+
+        assert len(eligible_additions(records, 2026, window_open=True)) == 1
+        assert eligible_additions(records, 2026, window_open=False) == []

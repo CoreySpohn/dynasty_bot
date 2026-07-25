@@ -106,8 +106,15 @@ class NFLScheduleClient:
             if preseason data is not available.
             
         Note:
-            Preseason data may not always be available in the nflverse dataset.
-            Falls back to estimating from regular season start if needed.
+            **These are always estimates.** nflverse publishes no preseason
+            games at all - verified across every season it carries (1999-2026,
+            7,549 games): each one is REG, WC, DIV, CON or SB. The `PRE` branch
+            below has therefore never matched, and is kept only in case
+            nflverse starts publishing them.
+
+            Anything that needs to know whether preseason is *currently*
+            happening should ask Sleeper's `/state/nfl` for `season_type`
+            instead, which is observed rather than estimated.
         """
         df = self.load_schedule(season)
         preseason = df.filter(pl.col('game_type') == 'PRE')
@@ -115,17 +122,19 @@ class NFLScheduleClient:
             min_date = preseason.select(pl.col('gameday').min()).item()
             max_date = preseason.select(pl.col('gameday').max()).item()
             return self._parse_date(min_date), self._parse_date(max_date)
-        
-        # Fallback: estimate from regular season (preseason typically ends
-        # about 2 weeks before regular season starts)
+
+        # Estimate from the regular season opener, which nflverse does publish
+        # months ahead. Preseason is a fixed length relative to week 1: the
+        # Hall of Fame game lands ~5 weeks before it and the last preseason
+        # game ~1 week before. Checked against 2025, where week 1 was Sep 4 and
+        # this yields Jul 31 - Aug 28 against an actual Jul 31 - Aug 24.
         reg_start = self.get_regular_season_start(season)
         if reg_start:
-            # Estimate: preseason starts ~5 weeks before, ends ~1 week before
             from datetime import timedelta
             pre_end = reg_start - timedelta(days=7)
             pre_start = reg_start - timedelta(days=35)
             return pre_start, pre_end
-        
+
         return None, None
     
     def get_week_end_date(self, season: int, week: int) -> Optional[date]:

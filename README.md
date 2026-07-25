@@ -98,7 +98,9 @@ Because an activation doesn't change *who* is rostered, the snapshot's skip-if-u
 
 The **current** draft class is exempt. Rookies land on the bench straight out of the draft, so "on the active roster" is their normal state rather than evidence of an activation; presuming otherwise would permanently close a slot the owner is still entitled to fill.
 
-`upcoming_season` decides which season to judge against, because Sleeper's `season` field keeps reporting the season that just finished until the commissioner creates the next league. Reading it directly meant that in July 2026 the bot audited against the 2025 deadline — a year in the past — and offered up the 2025 draft class as addable long after that window shut.
+`upcoming_season` decides which season to judge against, because a league's own `season` field keeps reporting the season that just finished until the commissioner creates the next one. Reading it directly meant that in July 2026 the bot audited against the 2025 deadline — a year in the past — and offered up the 2025 draft class as addable long after that window shut. It prefers Sleeper's `/state/nfl` (`league_season`), which knows the answer outright, and falls back to a calendar nudge only if that call fails.
+
+The addition **deadline** is the one thing no source reports. nflverse publishes no preseason games at all — 1999–2026, 7,549 games, every one `REG`/`WC`/`DIV`/`CON`/`SB` — so schedule-derived preseason dates are always estimates. `addition_window_open` uses Sleeper's `season_type` instead, which at least shuts the window for certain once the regular season begins.
 
 **How it works:**
 - Cost = Draft round + (round - 1) in picks

@@ -185,7 +185,9 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   owners, last name for players), not real NLP — fine for flavor, not
   bulletproof against short or common names.
 - **`config/league_state.yaml` drifts.** It's manual, and a stale
-  `current_state` silently gates the wrong set of deadline reminders.
+  `current_state` silently gates the wrong set of deadline reminders. All four
+  `transitions` are still `null`: `/sync_nfl` populates them from nflreadpy but
+  has never been run.
 - **Zero-point starters aren't provably byes.** The shame wall reports
   "started someone who scored nothing", which is honest, rather than
   claiming BYE — Sleeper's player payload doesn't carry bye weeks reliably.
@@ -212,11 +214,17 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   clinched/eliminated could produce those sentences but doesn't.
 - **The simulation ignores the playoff bracket itself.** Odds are for
   *making* the playoffs, not winning them.
-- **The taxi addition deadline is season-granular, not date-granular.** The
-  rules set it at "the end of the last game of the first week of NFL preseason
-  games", which the bot can't see. `evaluate_addition` allows additions for
-  the whole of the draft year, so between that deadline and year end it is
-  permissive by a few weeks. The safe direction, but not exact.
+- **The taxi addition deadline is bracketed, not exact.** The rules set it at
+  "the end of the last game of the first week of NFL preseason games", and
+  nothing available reports that moment. **nflverse publishes no preseason
+  games at all** — verified across every season it carries, 1999-2026, 7,549
+  games, all of them REG/WC/DIV/CON/SB — so `NFLScheduleClient.get_preseason_dates`
+  is always an estimate off the regular-season opener (its `PRE` branch has
+  never matched). Sleeper's `season_type` at least closes the window for
+  certain once the regular season starts, which is what `addition_window_open`
+  uses. Remaining slack: the few weeks between the real deadline and kickoff.
+  Closing it properly needs a preseason schedule source such as ESPN's API, or
+  one hardcoded date a year.
 - **Taxi activations before 2026-07-25 are assumed, not observed.** Sleeper
   can't tell us who was activated historically, so `/taxibackfill` records
   every own-draftee from a *past* draft class who is currently off taxi as
