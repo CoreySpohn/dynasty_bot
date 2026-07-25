@@ -90,16 +90,22 @@ class TaxiRaiding(commands.Cog):
         
         # Cache for player name -> player_id lookups
         self._player_name_cache: dict[str, str] = {}
-    
+
+        # What the last posted audit alert said, so an unchanged violation
+        # isn't re-announced every day. See _run_eligibility_audit.
+        self._last_audit_signature: Optional[frozenset] = None
+
     async def cog_load(self) -> None:
         """Called when the cog is loaded."""
         logger.info("Taxi Raiding cog loaded")
         # Start the reminder loop
         self.raid_reminder_loop.start()
-    
+        self.eligibility_audit_loop.start()
+
     async def cog_unload(self) -> None:
         """Called when the cog is unloaded."""
         self.raid_reminder_loop.cancel()
+        self.eligibility_audit_loop.cancel()
     
     @tasks.loop(hours=24)
     async def raid_reminder_loop(self) -> None:
@@ -201,6 +207,116 @@ class TaxiRaiding(commands.Cog):
                 f"✅ Checked pending raids. Sent {sent} reminder(s).", ephemeral=True
             )
     
+    # =========================================================================
+    # Eligibility audit - the check Sleeper can't do, on a schedule
+    # =========================================================================
+
+    @tasks.loop(hours=24)
+    async def eligibility_audit_loop(self) -> None:
+        """Audit every taxi squad daily while additions are still allowed."""
+        try:
+            await self._run_eligibility_audit()
+        except Exception as e:
+            logger.error(f"Eligibility audit loop failed: {e}", exc_info=True)
+
+    @eligibility_audit_loop.before_loop
+    async def before_eligibility_audit(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _run_eligibility_audit(self) -> int:
+        """One audit pass. Returns the number of violations alerted on.
+
+        Sleeper enforces *when* taxi moves happen and *how long* a player may
+        stay, but it cannot tell whether a stashed player was one of that
+        owner's own rookie-draft picks - so an illegal stash sits there
+        looking perfectly legal until somebody runs /taxiaudit. Nobody
+        reliably does, which made the rule real only if the commissioner
+        remembered. This closes that gap.
+
+        Two deliberate quiets:
+
+        - Only while the addition window is open. Once the deadline passes,
+          rosters are frozen and a daily alert about something no owner can
+          fix any more is just noise; the audit is there to be acted on.
+        - Only when the findings change. A violation nobody has fixed yet is
+          already known, and re-posting the same embed every 24 hours trains
+          people to ignore the channel. A new or resolved violation moves the
+          signature and speaks up again.
+        """
+        ctx = await self._taxi_context()
+
+        if not ctx["window_open"]:
+            logger.debug("Taxi addition window closed; skipping audit")
+            return 0
+
+        target = ctx["season"]
+        violations = audit(ctx["records"], target)
+        over = over_slot_limit(ctx["rosters"], ctx["taxi_slots"])
+
+        signature = frozenset(
+            [(v.roster_id, v.player_id, v.reason_text) for v in violations]
+            + [("over_limit", roster_id, count) for roster_id, count in over]
+        )
+        if not signature:
+            # Clean. Remember that, so a violation appearing tomorrow is seen
+            # as a change and gets announced.
+            self._last_audit_signature = signature
+            return 0
+        if signature == self._last_audit_signature:
+            logger.debug("Taxi audit unchanged since last alert; staying quiet")
+            return len(violations)
+
+        if not ALERT_CHANNEL_ID:
+            logger.warning("ALERT_CHANNEL_ID not configured, skipping taxi audit alert")
+            return len(violations)
+        channel = self.bot.get_channel(ALERT_CHANNEL_ID)
+        if not channel:
+            logger.error(f"Could not find alert channel {ALERT_CHANNEL_ID}")
+            return len(violations)
+
+        embed = await self._audit_embed(ctx, target, violations, over)
+        deadline = ctx.get("deadline")
+        embed.description = (
+            "**Automatic daily check.** "
+            + (
+                f"Taxi squads lock on {deadline:%B %-d}. "
+                if deadline
+                else ""
+            )
+            + "Fix these before then, or run `/taxiaudit` for the full rules.\n\n"
+            + (embed.description or "")
+        )
+
+        await channel.send(embed=embed)
+        self._last_audit_signature = signature
+        logger.info(
+            f"Taxi audit alerted on {len(violations)} violation(s), "
+            f"{len(over)} roster(s) over the slot limit"
+        )
+        return len(violations)
+
+    @app_commands.command(
+        name="checktaxi",
+        description="[Admin] Run the automatic taxi eligibility audit now",
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def check_taxi_now(self, interaction: discord.Interaction) -> None:
+        """Force an audit pass, ignoring the 'unchanged since last time' quiet."""
+        await interaction.response.defer(ephemeral=True)
+        self._last_audit_signature = None
+        try:
+            found = await self._run_eligibility_audit()
+        except Exception as e:
+            logger.error(f"Manual taxi audit failed: {e}", exc_info=True)
+            await interaction.followup.send(f"❌ Error auditing taxi squads: {e}", ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            f"✅ Audit ran. {found} violation(s) found."
+            + ("" if found else " Nothing posted."),
+            ephemeral=True,
+        )
+
     async def _build_player_name_cache(self) -> None:
         """Build a lowercase name -> player_id lookup cache."""
         if self._player_name_cache:
@@ -613,7 +729,7 @@ class TaxiRaiding(commands.Cog):
         draft_index = await self._draft_index()
         traded_for, activated = await self._ledger()
 
-        # The real deadline if /sync_nfl has fetched this season's preseason,
+        # The real deadline once this season's opener anchor is known,
         # otherwise None and addition_window_open falls back to season_type.
         season = upcoming_season(league, nfl_state=nfl_state)
         deadline = stored_taxi_deadline(season)
@@ -644,12 +760,12 @@ class TaxiRaiding(commands.Cog):
 
     @staticmethod
     def _deadline_text(ctx: dict) -> str:
-        """The deadline line, exact once /sync_nfl has fetched the preseason."""
+        """The deadline line, exact once the opener anchor is known."""
         deadline = ctx.get("deadline")
         if not deadline:
             return (
-                "Deadline: end of the last game of the first week of NFL "
-                "preseason — run `/sync_nfl` for the exact date."
+                "Deadline: the day before the NFL regular season opens — "
+                "run `/sync_nfl` for the exact date."
             )
         days = (deadline - date.today()).days
         if days > 0:
@@ -669,11 +785,11 @@ class TaxiRaiding(commands.Cog):
             if ctx.get("deadline"):
                 return (
                     f"The deadline passed on **{ctx['deadline']:%B %-d, %Y}** — "
-                    "the end of the first week of NFL preseason games."
+                    "the day before the NFL regular season opened."
                 )
             return (
                 "The deadline has passed for this season — taxi decisions are "
-                "due by the end of the first week of NFL preseason games, and "
+                "due the day before the NFL regular season opens, and "
                 f"the NFL is now in its **{ctx['season_type']}** phase."
             )
         if not drafted_this_year:
@@ -703,88 +819,101 @@ class TaxiRaiding(commands.Cog):
             target = season or ctx["season"]
             violations = audit(ctx["records"], target)
             over = over_slot_limit(ctx["rosters"], ctx["taxi_slots"])
-
-            embed = discord.Embed(
-                title=f"🚕 Taxi Audit — {target} season",
-                description=(
-                    "Sleeper allows anyone inside their first three years on a "
-                    "taxi slot. League rules are narrower: **only rookies you "
-                    "drafted yourself**, never after being activated, never "
-                    f"acquired by trade, and no more than **{TAXI_MAX_SEASONS} "
-                    "seasons** from their draft."
-                ),
-                color=(
-                    discord.Color.red() if violations or over
-                    else discord.Color.green()
-                ),
+            embed = await self._audit_embed(
+                ctx, target, violations, over, explicit_season=season is not None
             )
-
-            if violations:
-                by_owner: dict[str, list[str]] = {}
-                for violation in violations:
-                    owner = ctx["owners"].get(
-                        violation.roster_id, f"Team {violation.roster_id}"
-                    )
-                    detail = self._player_name(ctx["players"], violation.player_id)
-                    if violation.draft_season:
-                        detail += (
-                            f" (drafted {violation.draft_season}"
-                            + (
-                                f" rd{violation.draft_round}"
-                                if violation.draft_round
-                                else ""
-                            )
-                            + f", {violation.seasons_used} seasons)"
-                        )
-                    by_owner.setdefault(owner, []).append(
-                        f"• {detail} — {violation.reason_text}"
-                    )
-                for owner, lines in sorted(by_owner.items()):
-                    embed.add_field(
-                        name=f"❌ {owner}", value="\n".join(lines), inline=False
-                    )
-            else:
-                embed.add_field(
-                    name="✅ All clear",
-                    value="Every taxi squad is legal under league rules.",
-                    inline=False,
-                )
-
-            if over:
-                embed.add_field(
-                    name="🚨 Over the slot limit",
-                    value="\n".join(
-                        f"• {ctx['owners'].get(roster_id, roster_id)} — "
-                        f"{count}/{ctx['taxi_slots']}"
-                        for roster_id, count in over
-                    ),
-                    inline=False,
-                )
-
-            footer = f"{len(violations)} violation(s) • judged against {target}"
-            if season is None and target != ctx["league_season"]:
-                # Sleeper still reports the finished season until the next
-                # league is created; say so rather than look like a bug.
-                footer += (
-                    f" (Sleeper still reports {ctx['league_season']} as current)"
-                )
-            embed.set_footer(text=footer)
-            if not await self._ledger_size():
-                # Age and origin violations are unaffected by the ledger, but
-                # "already activated" ones can't be detected without it.
-                embed.add_field(
-                    name="Incomplete data",
-                    value=(
-                        "No activations on record, so this can only catch age "
-                        "and origin violations. Run `/taxibackfill`."
-                    ),
-                    inline=False,
-                )
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
             logger.error(f"taxiaudit failed: {e}", exc_info=True)
             await interaction.followup.send(f"❌ Error auditing taxi squads: {e}")
+
+    async def _audit_embed(
+        self,
+        ctx: dict,
+        target: int,
+        violations: list,
+        over: list,
+        explicit_season: bool = False,
+    ) -> discord.Embed:
+        """Render an audit result. Shared by /taxiaudit and the daily loop."""
+        embed = discord.Embed(
+            title=f"🚕 Taxi Audit — {target} season",
+            description=(
+                "Sleeper allows anyone inside their first three years on a "
+                "taxi slot. League rules are narrower: **only rookies you "
+                "drafted yourself**, never after being activated, never "
+                f"acquired by trade, and no more than **{TAXI_MAX_SEASONS} "
+                "seasons** from their draft."
+            ),
+            color=(
+                discord.Color.red() if violations or over
+                else discord.Color.green()
+            ),
+        )
+
+        if violations:
+            by_owner: dict[str, list[str]] = {}
+            for violation in violations:
+                owner = ctx["owners"].get(
+                    violation.roster_id, f"Team {violation.roster_id}"
+                )
+                detail = self._player_name(ctx["players"], violation.player_id)
+                if violation.draft_season:
+                    detail += (
+                        f" (drafted {violation.draft_season}"
+                        + (
+                            f" rd{violation.draft_round}"
+                            if violation.draft_round
+                            else ""
+                        )
+                        + f", {violation.seasons_used} seasons)"
+                    )
+                by_owner.setdefault(owner, []).append(
+                    f"• {detail} — {violation.reason_text}"
+                )
+            for owner, lines in sorted(by_owner.items()):
+                embed.add_field(
+                    name=f"❌ {owner}", value="\n".join(lines), inline=False
+                )
+        else:
+            embed.add_field(
+                name="✅ All clear",
+                value="Every taxi squad is legal under league rules.",
+                inline=False,
+            )
+
+        if over:
+            embed.add_field(
+                name="🚨 Over the slot limit",
+                value="\n".join(
+                    f"• {ctx['owners'].get(roster_id, roster_id)} — "
+                    f"{count}/{ctx['taxi_slots']}"
+                    for roster_id, count in over
+                ),
+                inline=False,
+            )
+
+        footer = f"{len(violations)} violation(s) • judged against {target}"
+        if not explicit_season and target != ctx["league_season"]:
+            # Sleeper still reports the finished season until the next
+            # league is created; say so rather than look like a bug.
+            footer += (
+                f" (Sleeper still reports {ctx['league_season']} as current)"
+            )
+        embed.set_footer(text=footer)
+        if not await self._ledger_size():
+            # Age and origin violations are unaffected by the ledger, but
+            # "already activated" ones can't be detected without it.
+            embed.add_field(
+                name="Incomplete data",
+                value=(
+                    "No activations on record, so this can only catch age "
+                    "and origin violations. Run `/taxibackfill`."
+                ),
+                inline=False,
+            )
+        return embed
 
     @app_commands.command(
         name="taxieligible",

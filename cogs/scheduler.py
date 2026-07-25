@@ -32,6 +32,7 @@ from lib.nfl_calendar import (
     ANCHOR_PRESEASON_END,
     ANCHOR_PRESEASON_START,
     ANCHOR_ROOKIE_DRAFT_END,
+    ANCHOR_ROOKIE_DRAFT_START,
     load_anchors,
     preseason_bounds,
     save_anchors,
@@ -219,17 +220,13 @@ class SchedulerCog(commands.Cog):
             'state_suggested': None,
         }
 
-        if self._only_draft_date_missing(season):
-            # Everything else is current and the draft simply hasn't finished.
-            # Poll just that one date rather than re-downloading the nflverse
-            # schedule and re-hitting ESPN four times, twice a day, for the
-            # weeks it can take the draft to land.
-            draft_end = await self._rookie_draft_end(season)
-            if draft_end:
-                self.nfl_anchors[ANCHOR_ROOKIE_DRAFT_END] = draft_end.isoformat()
-                save_anchors(self.nfl_anchors)
-                result['anchors_synced'] = True
-                logger.info(f"Recorded {season} rookie draft end {draft_end}")
+        if self._only_draft_dates_missing(season):
+            # Everything else is current and the draft simply hasn't been
+            # scheduled or hasn't finished. Poll just those two dates rather
+            # than re-downloading the nflverse schedule and re-hitting ESPN
+            # four times, twice a day, for the weeks it can take the draft to
+            # land.
+            result['anchors_synced'] = await self._sync_draft_anchors(season)
         elif self._anchors_need_sync(season):
             anchors = await self._fetch_anchors(season)
             self._store_anchors(anchors)
@@ -252,11 +249,40 @@ class SchedulerCog(commands.Cog):
         # Preseason schedule may not have been published at last sync.
         return bool(anchors.get(ANCHOR_PRESEASON_START))
 
-    def _only_draft_date_missing(self, season: int) -> bool:
-        """Whether the sole gap is the rookie draft end date."""
+    def _only_draft_dates_missing(self, season: int) -> bool:
+        """Whether the only gaps are the rookie draft's own dates."""
+        anchors = self.nfl_anchors or {}
         return self._schedule_anchors_current(season) and not (
-            self.nfl_anchors or {}
-        ).get(ANCHOR_ROOKIE_DRAFT_END)
+            anchors.get(ANCHOR_ROOKIE_DRAFT_START)
+            and anchors.get(ANCHOR_ROOKIE_DRAFT_END)
+        )
+
+    async def _sync_draft_anchors(self, season: int) -> bool:
+        """Refresh both rookie draft anchors from Sleeper. True if any changed.
+
+        The start date used to be written into deadlines.yaml by hand, via
+        /sync_sleeper - so if nobody remembered to run it, the draft reminder
+        and the three deadlines chained to it silently never fired. Sleeper
+        knows the date, so the bot reads it on a loop instead of storing a
+        hand-copied duplicate.
+        """
+        start, end = await self._draft_dates(season)
+        changed = False
+
+        for key, value in (
+            (ANCHOR_ROOKIE_DRAFT_START, start),
+            (ANCHOR_ROOKIE_DRAFT_END, end),
+        ):
+            # Only ever fill in or correct a date - a draft that is scheduled
+            # and then unscheduled shouldn't blank an anchor mid-countdown.
+            if value and self.nfl_anchors.get(key) != value.isoformat():
+                self.nfl_anchors[key] = value.isoformat()
+                changed = True
+                logger.info(f"Recorded {season} {key} {value}")
+
+        if changed:
+            save_anchors(self.nfl_anchors)
+        return changed
 
     def _anchors_need_sync(self, season: int) -> bool:
         """Whether a full anchor re-sync is warranted.
@@ -264,7 +290,7 @@ class SchedulerCog(commands.Cog):
         Re-syncs while the rookie draft is unfinished, since that date is the
         one anchor that lands unpredictably - the draft moves to whatever
         weekend owners can manage and then takes days to play out. That case is
-        handled by the cheaper `_only_draft_date_missing` path first.
+        handled by the cheaper `_only_draft_dates_missing` path first.
         """
         if not self.nfl_anchors:
             return True
@@ -437,6 +463,55 @@ class SchedulerCog(commands.Cog):
         await self._record_reminder(f"{deadline['id']}_{week_key}", season, 0)
         return True
     
+    def _resolve_recurrence(self, deadline: dict) -> Optional[date]:
+        """The next occurrence of a deadline that repeats on a fixed date.
+
+        Returns None for anything not on a calendar cycle - weekly_in_season
+        has its own path, and anchor-relative deadlines re-derive themselves
+        every year from anchors that re-sync.
+
+        "Next" means this year's date if it is still ahead, otherwise the
+        following cycle. A recurring deadline that has just passed should point
+        at when it comes round again, not sit on a date in the past looking
+        like a deadline nobody honoured.
+        """
+        recurring = deadline.get('recurring')
+        if recurring not in ('yearly', 'every_5_years'):
+            return None
+
+        stored = _parse_iso(deadline.get('date'))
+        month = deadline.get('month') or (stored.month if stored else None)
+        day = deadline.get('day') or (stored.day if stored else None)
+        if not month or not day:
+            # A yearly deadline with no fixed date - rookie_draft was one of
+            # these, and now anchors itself instead.
+            return None
+
+        step = 5 if recurring == 'every_5_years' else 1
+        base = deadline.get('base_year') or (stored.year if stored else None)
+        today = datetime.now(self.timezone).date()
+
+        # Start from the cycle year at or before today, then step forward until
+        # the date is no longer behind us.
+        year = today.year
+        if base and step > 1:
+            year = base + ((today.year - base) // step) * step
+
+        for _ in range(3):
+            try:
+                candidate = date(year, int(month), int(day))
+            except ValueError:
+                # Feb 29 in a common year, or a typo in the config.
+                logger.warning(
+                    f"Deadline {deadline.get('id')!r} has no {month}/{day} "
+                    f"in {year}"
+                )
+                return None
+            if candidate >= today:
+                return candidate
+            year += step
+        return None
+
     def _resolve_deadline_date(self, deadline: dict) -> Optional[date]:
         """Resolve a deadline's actual date (handling relative dates).
         
@@ -446,6 +521,15 @@ class SchedulerCog(commands.Cog):
         Returns:
             Resolved date or None if unable to resolve
         """
+        # Fixed calendar recurrence, checked before the absolute date because a
+        # recurring deadline's stored date is only ever its *last* occurrence.
+        # Nothing resolved these until now: only 'weekly_in_season' was
+        # handled, so draft_house never fired at all, and rule_voting_ends
+        # fired only in the one year somebody had typed its date in by hand.
+        recurred = self._resolve_recurrence(deadline)
+        if recurred:
+            return recurred
+
         # Absolute date
         if deadline.get('date'):
             try:
@@ -857,15 +941,11 @@ class SchedulerCog(commands.Cog):
 
         return upcoming_season(league, nfl_state=nfl_state)
 
-    async def _rookie_draft_end(self, season: int) -> Optional[date]:
-        """The date the season's rookie draft finished, or None if unfinished.
+    async def _season_draft(self, season: int) -> Optional[dict]:
+        """The season's rookie draft as Sleeper reports it, whatever its status.
 
-        Owners get 24 hours per pick, so a draft spans days or weeks - 2021's
-        ran Jun 19 to Jul 2. `last_picked` is therefore the only meaningful
-        completion date; `start_time` says nothing about when rosters settled.
-
-        None means "no completed draft for this season", which callers must read
-        as "the taxi window can't have closed yet" rather than as a date.
+        Sleeper keeps a draft per season on the league, so the season field is
+        what picks the right one - not the ordering, which is unspecified.
         """
         try:
             drafts = await self.bot.sleeper.get_drafts(self.bot.league_id)
@@ -874,18 +954,54 @@ class SchedulerCog(commands.Cog):
             return None
 
         for draft in drafts:
-            if str(draft.get('season')) != str(season):
-                continue
-            if draft.get('status') != 'complete':
-                logger.info(
-                    f"{season} draft status is {draft.get('status')!r}, "
-                    "not complete"
-                )
-                continue
+            if str(draft.get('season')) == str(season):
+                return draft
+        return None
+
+    async def _draft_dates(
+        self, season: int
+    ) -> tuple[Optional[date], Optional[date]]:
+        """(scheduled start, completion) for the season's rookie draft.
+
+        One `get_drafts` call answers both, and the upkeep loop wants both at
+        once, so they are read together rather than fetched twice.
+
+        The start comes from `start_time` and exists as soon as the
+        commissioner schedules the draft - that is the date the reminders
+        count down to. The end needs `last_picked`, because owners get 24
+        hours per pick and a draft spans days or weeks (2021's ran Jun 19 to
+        Jul 2), so `start_time` says nothing about when rosters settled.
+
+        Either being None means "not known yet", which callers must read as
+        "hasn't happened" rather than as a date.
+        """
+        draft = await self._season_draft(season)
+        if not draft:
+            return None, None
+
+        start = None
+        if draft.get('start_time'):
+            start = datetime.fromtimestamp(
+                draft['start_time'] / 1000, tz=self.timezone
+            ).date()
+
+        end = None
+        if draft.get('status') == 'complete':
             stamp = draft.get('last_picked') or draft.get('start_time')
             if stamp:
-                return datetime.fromtimestamp(stamp / 1000).date()
-        return None
+                end = datetime.fromtimestamp(stamp / 1000).date()
+        else:
+            logger.info(
+                f"{season} draft status is {draft.get('status')!r}, "
+                "not complete"
+            )
+
+        return start, end
+
+    async def _rookie_draft_end(self, season: int) -> Optional[date]:
+        """The date the season's rookie draft finished, or None if unfinished."""
+        _, end = await self._draft_dates(season)
+        return end
 
     async def _fetch_anchors(self, season: int) -> dict[str, Optional[date]]:
         """Collect every NFL anchor for a season, from both sources.
@@ -906,11 +1022,15 @@ class SchedulerCog(commands.Cog):
         except Exception as e:
             logger.warning(f"Could not fetch {season} Super Bowl date: {e}")
 
-        # When the rookie draft actually finished. Re-read every sync rather
-        # than assumed, because the date moves: the draft goes to whatever
-        # weekend owners can make and then runs 24 hours per pick. It also
-        # drives the league state (a completed draft means pre_season).
-        anchors[ANCHOR_ROOKIE_DRAFT_END] = await self._rookie_draft_end(season)
+        # When the rookie draft is scheduled, and when it actually finished.
+        # Re-read every sync rather than assumed, because both dates move: the
+        # draft goes to whatever weekend owners can make and then runs 24 hours
+        # per pick. The end also drives the league state (a completed draft
+        # means pre_season), and the start is what the draft reminders and the
+        # three deadlines chained to them count down to.
+        start, end = await self._draft_dates(season)
+        anchors[ANCHOR_ROOKIE_DRAFT_START] = start
+        anchors[ANCHOR_ROOKIE_DRAFT_END] = end
 
         # No taxi deadline anchor: it's the regular-season opener minus a day,
         # so storing it would duplicate a value already here and let the copy go
@@ -1003,9 +1123,10 @@ class SchedulerCog(commands.Cog):
     @app_commands.command(name="sync_sleeper")
     async def sync_sleeper_schedule(self, interaction: discord.Interaction):
         """Sync draft date and league info from Sleeper.
-        
-        Fetches the rookie draft start time from Sleeper and updates
-        the rookie_draft deadline date.
+
+        Fetches the rookie draft start time from Sleeper into the
+        rookie_draft_start anchor. The upkeep loop does this twice a day
+        anyway; this is the impatient version.
         """
         await interaction.response.defer()
         
@@ -1052,19 +1173,15 @@ class SchedulerCog(commands.Cog):
                 if start_time:
                     # Sleeper returns timestamp in milliseconds
                     draft_datetime = datetime.fromtimestamp(start_time / 1000, tz=self.timezone)
-                    draft_date = draft_datetime.date()
-                    
-                    # Update the rookie_draft deadline
-                    for idx, deadline in enumerate(self.deadlines_config.get('deadlines', [])):
-                        if deadline.get('id') == 'rookie_draft':
-                            self.deadlines_config['deadlines'][idx]['date'] = draft_date.isoformat()
-                            # Clear relative_to if it was set
-                            if 'relative_to' in self.deadlines_config['deadlines'][idx]:
-                                del self.deadlines_config['deadlines'][idx]['relative_to']
-                            break
-                    
-                    self._save_deadlines()
-                    
+
+                    # Writes the rookie_draft_start anchor, not deadlines.yaml.
+                    # This command used to edit the hand-maintained config in
+                    # place, which both stripped its comments and left the
+                    # date to drift if the draft moved. The upkeep loop keeps
+                    # the anchor current on its own now; running this just
+                    # makes it happen immediately.
+                    await self._sync_draft_anchors(await self._target_season())
+
                     embed.add_field(
                         name="🏈 Rookie Draft",
                         value=f"{draft_datetime.strftime('%B %d, %Y at %I:%M %p %Z')}\n"
@@ -1074,7 +1191,11 @@ class SchedulerCog(commands.Cog):
                     )
                     embed.add_field(
                         name="✅ Updated",
-                        value="Rookie draft deadline has been set!",
+                        value=(
+                            "`rookie_draft_start` anchor set — the draft "
+                            "reminder and the draft preview, dues and FAAB "
+                            "deadlines all count down from it."
+                        ),
                         inline=False
                     )
                 else:

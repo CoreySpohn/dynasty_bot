@@ -127,8 +127,14 @@ deadlines:
   # "Supplemental draft" was a separate, since-voted-out format where
   # non-rookies on waivers were fair game. This is the rookie draft.
   description: "🏈 The annual 5-round rookie draft begins! Each owner has 24 hours per pick."
-  date: null  # Synced from Sleeper via /sync_sleeper
-  recurring: yearly
+  # Anchored, not dated. This used to be a literal date that only the manual
+  # /sync_sleeper command ever wrote, so until someone ran it the draft
+  # reminder never fired - and neither did draft_preview, league_dues or
+  # faab_opens, which all chain off this entry. The upkeep loop now reads the
+  # scheduled start straight from Sleeper into rookie_draft_start.
+  date: null
+  relative_to: rookie_draft_start
+  offset_days: 0
   reminders:
   - 7
   - 1
@@ -195,12 +201,12 @@ deadlines:
   #                           their first year. It is NOT a loophole.
   # So Sleeper enforces the *when* and the *how long*. What it cannot check is
   # the *who*: only players you took in that off-season's own rookie draft may
-  # be added, no free-agent pickups. lib/taxi_rules.py holds that rule and
-  # /taxiaudit + /taxieligible compute it - but note nothing runs them on a
-  # schedule yet, so it still takes someone invoking the command.
+  # be added, no free-agent pickups. lib/taxi_rules.py holds that rule,
+  # /taxiaudit + /taxieligible compute it, and the taxi cog's daily audit loop
+  # runs it unprompted while the window is open - alerting only on violations.
   # The league deadline is a day earlier than Sleeper's, so a move made on
   # kickoff day after games began can't count.
-  description: "🚕 Finalize your taxi squad by the day before NFL Week 1! Sleeper locks taxi moves at the regular-season start but can't check eligibility - only players you took in this off-season's rookie draft may be stashed. Run /taxieligible to see yours; /taxiaudit flags violations."
+  description: "🚕 Finalize your taxi squad by the day before NFL Week 1! Sleeper locks taxi moves at the regular-season start but can't check eligibility - only players you took in this off-season's rookie draft may be stashed. The bot audits every squad daily and will call out anything illegal. Run /taxieligible to see who you can still add."
   date: null
   relative_to: nfl_regular_season_start
   offset_days: -1

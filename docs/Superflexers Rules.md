@@ -106,11 +106,12 @@ So Sleeper handles the **when** and the **how long**. What it cannot check is
 the **who**: that a stashed player was one of that owner's own picks from that
 off-season's rookie draft, with no free-agent pickups. The bot holds that rule
 in `lib/taxi_rules.py`, and `/taxieligible` and `/taxiaudit` compute it — so
-it is no longer a manual eyeball over rosters. It does still need someone to
-run the command: nothing audits eligibility on a schedule today, and the only
-automatic taxi loop is the 24-hour raid reminder. The league's own deadline
-sits one day before Sleeper's, so a move made on kickoff day after games
-began can't count.
+it is no longer a manual eyeball over rosters, and it no longer waits on
+anybody remembering to look. The bot audits every taxi squad once a day for
+as long as additions are still allowed, and posts to the alert channel only
+when something is actually wrong; `/checktaxi` forces a pass. The league's own
+deadline sits one day before Sleeper's, so a move made on kickoff day after
+games began can't count.
 
 ### Why the deadline moved to the start of the regular season
 

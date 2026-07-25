@@ -52,6 +52,7 @@ DEADLINES_PATH = Path(__file__).parent.parent / "config" / "deadlines.yaml"
 ANCHOR_TAXI_DEADLINE = "nfl_taxi_deadline"
 ANCHOR_PRESEASON_START = "nfl_preseason_start"
 ANCHOR_PRESEASON_END = "nfl_preseason_end"
+ANCHOR_ROOKIE_DRAFT_START = "rookie_draft_start"
 ANCHOR_ROOKIE_DRAFT_END = "rookie_draft_end"
 ANCHOR_REGULAR_SEASON_START = "nfl_regular_season_start"
 

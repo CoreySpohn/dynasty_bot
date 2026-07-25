@@ -85,7 +85,8 @@ a shared **derivation layer**, not a table.
   exhaustive enumeration rather than inferred from simulation
 - **Sacko Watch** — `/sacko`, last-place odds off the same simulation
 - **Taxi squad rule tracking** — `lib/taxi_rules.py` plus `/taxiaudit`,
-  `/taxieligible` and an admin `/taxibackfill`. Sleeper enforces *when*
+  `/taxieligible`, an admin `/taxibackfill`, and a daily audit loop that
+  alerts on violations while additions are still open. Sleeper enforces *when*
   (`taxi_deadline = 4`, the regular-season start) and *how long*
   (`taxi_years = 3`), but not *who* — it cannot tell whether a stashed player
   was one of your own rookie-draft picks that off-season, so the bot holds
@@ -250,8 +251,10 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   read from `taxi_ledger`, but nothing yet walks `get_transactions` to
   populate it. Currently no violations depend on it, since every taxi player
   is their own owner's draftee.
-- **Nothing enforces taxi rules at the moment of the move.** `/taxiaudit`
-  reports after the fact; it doesn't stop an illegal Sleeper move.
+- **Nothing enforces taxi rules at the moment of the move.** Sleeper has no
+  hook to reject one, so the bot can only catch it afterwards. The daily audit
+  now does that within 24 hours while the window is open, which is as close to
+  the moment as this design gets.
 - **Cadence and quiet hours aren't state-aware.** `RUMORS_PER_WEEK` is one
   constant, so it can't yet be busier in-season or around the trade deadline
   than it is in the dead of the offseason.
