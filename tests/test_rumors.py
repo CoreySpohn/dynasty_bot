@@ -1,13 +1,24 @@
 """Tests for the League Rumors cog."""
 
 import random
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
 
 import cogs.trade_values as trade_values_module
-from cogs.rumors import STYLE_NOTES, LeagueRumors, fallback_rumor_text
+from cogs.rumors import (
+    LEAGUE_TIMEZONE,
+    RUMOR_CHANCE_PER_TICK,
+    RUMOR_QUIET_END_HOUR,
+    RUMOR_QUIET_START_HOUR,
+    RUMORS_PER_WEEK,
+    STYLE_NOTES,
+    LeagueRumors,
+    fallback_rumor_text,
+)
 from database import Database
 
 
@@ -62,6 +73,78 @@ class TestRandomRumorTaskAutostarts:
         rumor ever posted without a manual /randomrumor or DM.
         """
         assert rumors_cog.random_rumor_task.is_running()
+
+
+class TestRandomRumorCadence:
+    """The loop ticks hourly and rolls per tick. A coarse loop fires at a
+    fixed clock time forever (whatever time the bot last started), so if that
+    time landed inside the quiet window every tick was skipped and nothing
+    ever posted - which is what a 48h loop plus a restart at 05:04 UTC did.
+    """
+
+    ET = ZoneInfo(LEAGUE_TIMEZONE)
+
+    def _at(self, hour, day=25):
+        return datetime(2026, 7, day, hour, 0, tzinfo=self.ET)
+
+    async def test_realised_rate_matches_the_configured_target(self, rumors_cog):
+        """Simulate the real guard logic and check the rate we actually get.
+
+        Asserting on RUMOR_CHANCE_PER_TICK alone would be circular and would
+        have missed that the minimum-spacing dead time pulls the naive rate
+        down to ~1.7/week.
+        """
+        weeks = 400
+        clock = self._at(0, day=1)
+        posts = 0
+
+        random.seed(7)
+        for _ in range(weeks * 7 * 24):
+            if rumors_cog._should_post_random_rumor(clock):
+                posts += 1
+                rumors_cog._last_random_rumor_at = clock
+            clock += timedelta(hours=1)
+
+        assert posts / weeks == pytest.approx(RUMORS_PER_WEEK, abs=0.15)
+
+    async def test_quiet_hours_are_evaluated_in_league_time(self, rumors_cog):
+        # 05:00 ET is inside the quiet window; 05:00 UTC (01:00 ET) is too.
+        # The old code read the server clock, so a UTC host let 4-8am ET
+        # through and blocked 8pm-midnight ET.
+        with patch("cogs.rumors.random.random", return_value=0.0):
+            assert rumors_cog._should_post_random_rumor(self._at(5)) is False
+            assert rumors_cog._should_post_random_rumor(self._at(21)) is True
+
+    async def test_posts_when_the_roll_succeeds_in_active_hours(self, rumors_cog):
+        with patch("cogs.rumors.random.random", return_value=0.0):
+            assert rumors_cog._should_post_random_rumor(self._at(12)) is True
+
+    async def test_skips_when_the_roll_fails(self, rumors_cog):
+        with patch("cogs.rumors.random.random", return_value=0.99):
+            assert rumors_cog._should_post_random_rumor(self._at(12)) is False
+
+    async def test_enforces_minimum_spacing(self, rumors_cog):
+        rumors_cog._last_random_rumor_at = self._at(12)
+
+        with patch("cogs.rumors.random.random", return_value=0.0):
+            # Two hours later: too soon regardless of the dice.
+            assert rumors_cog._should_post_random_rumor(self._at(14)) is False
+            # Past the spacing window the next day.
+            assert (
+                rumors_cog._should_post_random_rumor(self._at(12, day=26)) is True
+            )
+
+    async def test_every_active_hour_is_reachable(self, rumors_cog):
+        """No fixed-phase trap: with the dice in our favour, any active hour
+        can post - so the cadence doesn't depend on restart time."""
+        with patch("cogs.rumors.random.random", return_value=0.0):
+            active = [
+                hour
+                for hour in range(24)
+                if rumors_cog._should_post_random_rumor(self._at(hour))
+            ]
+
+        assert active == list(range(RUMOR_QUIET_END_HOUR, 24))
 
 
 class TestAIClientRotation:

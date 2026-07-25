@@ -287,16 +287,38 @@ class TestPostedRecapIdempotency:
 
 class TestAutopostGuards:
     def test_skips_before_any_week_is_complete(self, recaps_cog):
-        assert recaps_cog._in_season({"settings": {"leg": 1}}) is False
-        assert recaps_cog._in_season({"settings": {"leg": 2}}) is True
-        assert recaps_cog._in_season({}) is False
+        assert recaps_cog._should_autopost(
+            {"status": "in_season", "settings": {"leg": 1}}
+        ) is False
+        assert recaps_cog._should_autopost(
+            {"status": "in_season", "settings": {"leg": 2}}
+        ) is True
+        assert recaps_cog._should_autopost({}) is False
+
+    def test_skips_a_completed_season(self, recaps_cog):
+        """Sleeper leaves `leg` at the final week after a season ends, so a
+        leg-only check would re-post last season's week 17 awards all
+        offseason - which is exactly what happened in the 2026 offseason."""
+        assert recaps_cog._should_autopost(
+            {"status": "complete", "settings": {"leg": 17}}
+        ) is False
+
+    def test_skips_predraft_and_drafting(self, recaps_cog):
+        for status in ("pre_draft", "drafting"):
+            assert recaps_cog._should_autopost(
+                {"status": status, "settings": {"leg": 17}}
+            ) is False
 
     async def test_does_not_repost_an_already_posted_week(self, recaps_cog, test_db):
         channel = MagicMock()
         channel.send = AsyncMock(return_value=MagicMock(id=999))
         recaps_cog.bot.get_channel = MagicMock(return_value=channel)
         recaps_cog._league_context = AsyncMock(
-            return_value=({"season": "2026", "settings": {"leg": 4}}, OWNERS, {})
+            return_value=(
+                {"season": "2026", "status": "in_season", "settings": {"leg": 4}},
+                OWNERS,
+                {},
+            )
         )
         await recaps_cog._mark_posted(2026, 3, "awards")
         await recaps_cog._mark_posted(2026, 3, "shamewall")

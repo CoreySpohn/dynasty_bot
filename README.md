@@ -56,6 +56,10 @@ uv run python main.py
 | `/randomrumor [category] [context]` | Force post a random rumor, optionally scoped to trade/draft/drama/general or your own freeform direction |
 | `/nflrumor <text>` | Post NFL news to dedicated channel |
 
+**Unprompted rumor cadence:** roughly **2 per week**, tuned via `RUMORS_PER_WEEK` in `cogs/rumors.py`. The loop ticks hourly and rolls small per-tick odds, with an 18-hour minimum gap and no posting between midnight and 8am **league time** (`America/New_York`, not the server's clock).
+
+Hourly-with-low-odds rather than one coarse timer, deliberately: a `tasks.loop(hours=48)` fires at the same clock time forever — whenever the bot last restarted — so if that time falls inside the quiet window, *every* tick is skipped and nothing ever posts. That is exactly what used to happen.
+
 ---
 
 ### 🚕 Taxi Squad Raiding

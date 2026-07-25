@@ -91,7 +91,7 @@ class Recaps(commands.Cog):
         """
         try:
             league, owners, players = await self._league_context()
-            if not self._in_season(league):
+            if not self._should_autopost(league):
                 return
 
             season = int(league.get("season") or 0)
@@ -153,8 +153,17 @@ class Recaps(commands.Cog):
         await self.bot.wait_until_ready()
 
     @staticmethod
-    def _in_season(league: dict[str, Any]) -> bool:
-        """Only auto-post once at least one week has been played."""
+    def _should_autopost(league: dict[str, Any]) -> bool:
+        """Whether there's a live season worth recapping.
+
+        `settings.leg` is NOT sufficient on its own: Sleeper leaves it at the
+        final week once a season completes, so a leg-only check stays true
+        all offseason and the loop tries to re-post last season's week 17
+        awards as though they were new. `status` is the reliable signal -
+        it goes "pre_draft" / "drafting" / "in_season" / "complete".
+        """
+        if league.get("status") != "in_season":
+            return False
         return (league.get("settings", {}).get("leg", 0) or 0) > 1
 
     # =====================================================================

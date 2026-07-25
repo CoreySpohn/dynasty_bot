@@ -189,6 +189,16 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
 - **`/h2h` and `/rings` are API-heavy.** They walk every chained season.
   Fine for occasional use; if they get called often, cache per season the way
   `lib/results.py` caches completed weeks.
+- **Rumor cadence is ~2.1/week against a 2.0 target.** The minimum-spacing
+  dead time is corrected for only to first order, since how much of a
+  spacing window overlaps the quiet hours depends on when the last rumor
+  posted. Pinned by a simulation test; not worth solving exactly.
+- **The bot needs Send Messages on the announcements channel.** The recap
+  auto-post got `403 Missing Permissions` on its first run. Recaps fall back
+  to `ALERT_CHANNEL_ID`, but the intended target is `#announcements`.
+- **Cadence and quiet hours aren't state-aware.** `RUMORS_PER_WEEK` is one
+  constant, so it can't yet be busier in-season or around the trade deadline
+  than it is in the dead of the offseason.
 
 ---
 
