@@ -14,7 +14,10 @@ import aiohttp
 from clients.sleeper import SleeperClient
 from cogs.analytics import calculate_optimal_lineup
 
-# League ID from the .env file
+# The 2025 league, pinned deliberately: the expected values below come from a
+# 2025 end-of-regular-season standings screenshot, so this must keep reading the
+# 2025 league even after SLEEPER_LEAGUE_ID moves on to a renewed season. Do not
+# replace it with the config value.
 LEAGUE_ID = "1231652068087844864"
 
 # Expected MaxPF values from Sleeper app (2025 season, weeks 1-14)

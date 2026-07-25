@@ -186,11 +186,21 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   bulletproof against short or common names.
 - **`config/league_state.yaml`'s `pre_draft` state is still manual.** The other
   three are now derived and applied by `SchedulerCog.upkeep_loop` (see
-  `lib/league_state.py`), and NFL anchors re-sync themselves. `pre_draft`
-  can't be: the config describes it as "after rules voted", and a rules vote
-  has no API. It also isn't in `VALID_STATES`, so nothing sets it today.
+  `lib/league_state.py`), and NFL anchors re-sync themselves. `pre_draft` is
+  described in the config as "after rules voted, store closed, league renewed".
+  Two of those three are observable — "league renewed" is exactly Sleeper
+  reporting `status: pre_draft` on a league for the upcoming season, which is
+  the current 2026 state — but a rules vote has no API, and `pre_draft` isn't
+  in `VALID_STATES`, so nothing sets it today. Adding it would mean deciding
+  whether the renewal alone is enough to enter it.
   The `transitions` block is likewise still `null` and unread by anything —
   the derivation uses live signals instead.
+- **The league ID has to be updated by hand every renewal.** Sleeper mints a new
+  league each season and offers no forward pointer, so nothing can follow it
+  automatically from the old ID. It could be discovered by querying a known
+  user's leagues for the current season
+  (`/user/<user_id>/leagues/nfl/<season>`) and matching on name, which would
+  make renewal zero-touch. Not built; `SLEEPER_LEAGUE_ID` is correct for 2026.
 - **Zero-point starters aren't provably byes.** The shame wall reports
   "started someone who scored nothing", which is honest, rather than
   claiming BYE — Sleeper's player payload doesn't carry bye weeks reliably.

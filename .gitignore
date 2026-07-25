@@ -135,6 +135,10 @@ celerybeat.pid
 
 # Environments
 .env
+# Backups too - SLEEPER_LEAGUE_ID changes every renewal, so copying .env aside
+# before editing it is a natural move, and `.env` alone doesn't cover `.env.bak`.
+.env.*
+!.env.example
 .envrc
 .venv
 env/

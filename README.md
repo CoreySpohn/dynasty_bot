@@ -291,7 +291,7 @@ Tags owner nicknames with league context (e.g. `Corey [3rd place]`) without touc
 ```bash
 # Required
 DISCORD_TOKEN=your_bot_token
-SLEEPER_LEAGUE_ID=your_league_id
+SLEEPER_LEAGUE_ID=your_league_id   # changes every year - see below
 
 # For Kohl's Cash betting
 THE_ODDS_API_KEY=your_odds_api_key
@@ -309,6 +309,18 @@ NFL_CHANNEL_ID=channel_for_nfl_news
 ALERT_CHANNEL_ID=channel_for_alerts
 KOHLS_FORUM_CHANNEL_ID=forum_for_game_threads
 ```
+
+### `SLEEPER_LEAGUE_ID` changes every season
+
+Renewing a dynasty league on Sleeper creates a **brand new league** with a new ID; the old one stays frozen at the season it finished. So this variable has to be updated once a year, and until it is, the bot reads a league that will never change again — the stale-anchor and stale-season bugs both traced back to exactly that.
+
+Nothing else needs migrating. Verified across the 2025 → 2026 renewal (`1231652068087844864` → `1329282772417671168`):
+
+- Rosters carry over unchanged — same 12 roster IDs, same owners, same 392 players, same 46 taxi players. No stored table keys on league ID.
+- History follows `previous_league_id` automatically, so the chain simply grows (8 leagues now, 2019–2026).
+- The new season contributes no results until games are played: `get_history_results` returns 2019–2025 only, and `get_champions` returns 7 champions rather than inventing an eighth.
+
+Current values are correct for the 2026 season. `/taxiaudit` returns the same 8 violations before and after the switch, which is the check worth repeating next year.
 
 ---
 
