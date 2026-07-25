@@ -12,9 +12,11 @@ import pytest
 import yaml
 
 from lib.nfl_calendar import (
+    ANCHOR_REGULAR_SEASON_START,
     ANCHOR_ROOKIE_DRAFT_END,
     ANCHOR_TAXI_DEADLINE,
     PreseasonWeek,
+    effective_taxi_deadline,
     first_full_week,
     load_anchors,
     parse_preseason_week,
@@ -122,6 +124,59 @@ class TestPreseasonBounds:
         assert preseason_bounds([]) == (None, None)
 
 
+class TestEffectiveTaxiDeadline:
+    """Reconciling the written deadline with a draft that floats past it.
+
+    The seasons here are real: the league's rookie draft ran to Aug 18 in 2023
+    and Aug 19 in 2025, while the first full preseason week ended Aug 13 and
+    Aug 10.
+    """
+
+    def test_written_deadline_holds_when_the_draft_finishes_in_time(self):
+        # 2024: draft ended Aug 6, written deadline Aug 11.
+        assert effective_taxi_deadline(
+            date(2024, 8, 11), date(2024, 8, 6), date(2024, 9, 5)
+        ) == date(2024, 8, 11)
+
+    def test_extends_when_the_draft_overtakes_it(self):
+        # 2025: draft ended Aug 19, so Aug 10 is unusable.
+        assert effective_taxi_deadline(
+            date(2025, 8, 10), date(2025, 8, 19), date(2025, 9, 4)
+        ) == date(2025, 8, 22)
+
+    def test_extends_for_2023_too(self):
+        assert effective_taxi_deadline(
+            date(2023, 8, 13), date(2023, 8, 18), date(2023, 9, 7)
+        ) == date(2023, 8, 21)
+
+    def test_grace_is_overridable(self):
+        assert effective_taxi_deadline(
+            date(2025, 8, 10), date(2025, 8, 19), grace_days=7
+        ) == date(2025, 8, 26)
+
+    def test_never_runs_past_the_opener(self):
+        """Taxi decisions can't still be open once games count."""
+        assert effective_taxi_deadline(
+            date(2026, 8, 16), date(2026, 9, 6), date(2026, 9, 9)
+        ) == date(2026, 9, 8)
+
+    def test_clamp_yields_when_it_would_precede_the_draft(self):
+        """A draft finishing after kickoff means the calendar is already broken;
+        shortening the deadline below the draft's own end helps nobody."""
+        assert effective_taxi_deadline(
+            date(2026, 8, 16), date(2026, 9, 20), date(2026, 9, 9)
+        ) == date(2026, 9, 23)
+
+    def test_no_opener_means_no_clamp(self):
+        assert effective_taxi_deadline(
+            date(2026, 8, 16), date(2026, 8, 19)
+        ) == date(2026, 8, 22)
+
+    def test_unknown_inputs(self):
+        assert effective_taxi_deadline(None, date(2026, 8, 19)) is None
+        assert effective_taxi_deadline(date(2026, 8, 16), None) is None
+
+
 class TestStoredTaxiDeadline:
     """Every path here exists to avoid enforcing a deadline that would close
     the window when it shouldn't be closed."""
@@ -149,15 +204,25 @@ class TestStoredTaxiDeadline:
 
         assert stored_taxi_deadline(2026, anchors) is None
 
-    def test_not_enforced_when_the_draft_ran_past_it(self):
-        """The 2025 case: draft ended Aug 19, first full preseason week ended
-        Aug 10. Applied literally the deadline expired before anyone drafted."""
+    def test_moves_the_deadline_when_the_draft_ran_past_it(self):
+        """The 2025 case: applied literally the deadline expired before anyone
+        drafted, so it shifts to a few days after the final pick."""
         anchors = {
             ANCHOR_TAXI_DEADLINE: "2026-08-16",
             ANCHOR_ROOKIE_DRAFT_END: "2026-08-19",
+            ANCHOR_REGULAR_SEASON_START: "2026-09-09",
         }
 
-        assert stored_taxi_deadline(2026, anchors) is None
+        assert stored_taxi_deadline(2026, anchors) == date(2026, 8, 22)
+
+    def test_respects_the_opener_clamp_from_anchors(self):
+        anchors = {
+            ANCHOR_TAXI_DEADLINE: "2026-08-16",
+            ANCHOR_ROOKIE_DRAFT_END: "2026-09-06",
+            ANCHOR_REGULAR_SEASON_START: "2026-09-09",
+        }
+
+        assert stored_taxi_deadline(2026, anchors) == date(2026, 9, 8)
 
     def test_missing_and_malformed_anchors(self):
         assert stored_taxi_deadline(2026, {}) is None

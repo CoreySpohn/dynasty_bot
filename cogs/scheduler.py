@@ -27,6 +27,7 @@ from clients.espn import ESPNClient
 from clients.nfl_schedule import NFLScheduleClient
 from database import db
 from lib.league_state import derive_state, should_apply
+from lib.yaml_config import load_config, save_config
 from lib.nfl_calendar import (
     ANCHOR_PRESEASON_END,
     ANCHOR_PRESEASON_START,
@@ -102,13 +103,8 @@ class SchedulerCog(commands.Cog):
     # =========================================================================
     
     def _load_state(self) -> dict:
-        """Load league state from YAML config."""
-        try:
-            with open(LEAGUE_STATE_PATH, 'r') as f:
-                return yaml.safe_load(f)
-        except FileNotFoundError:
-            logger.warning("league_state.yaml not found, using defaults")
-            return {
+        """Load league state, preserving the file's comments for saving."""
+        return load_config(LEAGUE_STATE_PATH, default={
                 'current_state': 'off_season',
                 'season': {'year': datetime.now().year},
                 'alerts': {
@@ -117,29 +113,24 @@ class SchedulerCog(commands.Cog):
                     'timezone': 'America/New_York'
                 },
                 'commissioner': {'discord_id': None}
-            }
+            })
     
     def _load_deadlines(self) -> dict:
-        """Load deadlines from YAML config."""
-        try:
-            with open(DEADLINES_PATH, 'r') as f:
-                return yaml.safe_load(f)
-        except FileNotFoundError:
-            logger.warning("deadlines.yaml not found, using empty config")
-            return {'deadlines': [], 'nfl_anchors': {}}
+        """Load deadlines, preserving the file's comments for saving."""
+        return load_config(DEADLINES_PATH, default={'deadlines': []})
     
     def _save_state(self) -> None:
-        """Save league state to YAML config."""
-        with open(LEAGUE_STATE_PATH, 'w') as f:
-            yaml.dump(self.state_config, f, default_flow_style=False,
-                      sort_keys=False, allow_unicode=True, width=4096)
+        """Save league state, keeping its comments intact.
+
+        Comment preservation matters here because _advance_state saves
+        automatically when the season moves on - nobody is watching.
+        """
+        save_config(self.state_config, LEAGUE_STATE_PATH)
         logger.info("Saved league state config")
     
     def _save_deadlines(self) -> None:
-        """Save deadlines to YAML config."""
-        with open(DEADLINES_PATH, 'w') as f:
-            yaml.dump(self.deadlines_config, f, default_flow_style=False,
-                      sort_keys=False, allow_unicode=True, width=4096)
+        """Save deadlines, keeping its comments intact."""
+        save_config(self.deadlines_config, DEADLINES_PATH)
         logger.info("Saved deadlines config")
     
     @property

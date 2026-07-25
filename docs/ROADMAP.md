@@ -184,12 +184,6 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
 - **Rumor entity extraction is regex/substring based** (first name for
   owners, last name for players), not real NLP — fine for flavor, not
   bulletproof against short or common names.
-- **`deadlines.yaml` still loses its comments when a human edits a deadline.**
-  The anchor sync no longer touches that file (generated dates went to
-  `config/nfl_anchors.yaml`), but `/deadline`-style commands still round-trip it
-  through `yaml.dump`, which drops comments. Only on explicit human action now
-  rather than twice a day, and no data is lost - but fixing it properly needs a
-  comment-preserving YAML round-trip (`ruamel.yaml`).
 - **`config/league_state.yaml`'s `pre_draft` state is still manual.** The other
   three are now derived and applied by `SchedulerCog.upkeep_loop` (see
   `lib/league_state.py`), and NFL anchors re-sync themselves. `pre_draft` is
@@ -236,25 +230,13 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   clinched/eliminated could produce those sentences but doesn't.
 - **The simulation ignores the playoff bracket itself.** Odds are for
   *making* the playoffs, not winning them.
-- **The written taxi deadline contradicts the draft calendar, and needs a
-  ruling.** The rules put it at "the end of the last game of the first week of
-  NFL preseason games". That date is now fetched exactly (ESPN, via
-  `/sync_nfl` — nflverse publishes no preseason games at all), but the rookie
-  draft floats to whatever weekend owners can manage and then takes days to
-  run, 24 hours per pick. So it has repeatedly finished *after* the deadline:
-
-  | Season | Rookie draft ended | First full preseason week ended |
-  |--------|--------------------|---------------------------------|
-  | 2023   | Aug 18             | Aug 13                          |
-  | 2024   | Aug 6              | Aug 11                          |
-  | 2025   | Aug 19             | Aug 10                          |
-
-  Two of the last three years the deadline had expired before anyone could
-  draft, which cannot be what's enforced. `stored_taxi_deadline` therefore
-  refuses to apply a deadline the draft has overtaken, falling back to
-  `season_type` bracketing, and logs why. The real fix is a rules decision:
-  most likely re-anchoring the deadline to the draft's completion rather than
-  to the NFL preseason.
+- **The taxi deadline rule is a bot interpretation, not a ratified rule.** The
+  written deadline ("end of the last game of the first week of NFL preseason
+  games") expired before the rookie draft finished in 2023 and 2025, so
+  `effective_taxi_deadline` takes the later of it and
+  `TAXI_DEADLINE_GRACE_DAYS` (3) after the final pick. That keeps the written
+  rule binding whenever it's workable, but the grace period is a number the bot
+  chose - it wants league sign-off, and it's a one-constant change.
 - **Taxi activations before 2026-07-25 are assumed, not observed.** Sleeper
   can't tell us who was activated historically, so `/taxibackfill` records
   every own-draftee from a *past* draft class who is currently off taxi as

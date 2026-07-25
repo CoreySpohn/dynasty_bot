@@ -32,13 +32,22 @@ special case, because then the first week already has 16 games.
 
 Set `TAXI_DEADLINE_INCLUDES_HOF_GAME = True` for the literal reading; it is the
 only edit required.
+
+## The draft can finish after the deadline
+
+The rookie draft floats to whatever weekend owners can manage and runs 24 hours
+per pick, so the written deadline has repeatedly expired before anyone could
+draft (2023 and 2025 both). `effective_taxi_deadline` therefore takes the later
+of the written date and a short grace period after the final pick - see
+`TAXI_DEADLINE_GRACE_DAYS`. The written rule still binds in years where the
+draft finishes in time.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -65,6 +74,28 @@ ANCHOR_TAXI_DEADLINE = "nfl_taxi_deadline"
 ANCHOR_PRESEASON_START = "nfl_preseason_start"
 ANCHOR_PRESEASON_END = "nfl_preseason_end"
 ANCHOR_ROOKIE_DRAFT_END = "rookie_draft_end"
+ANCHOR_REGULAR_SEASON_START = "nfl_regular_season_start"
+
+# Days after the final rookie pick that taxi decisions stay open, when the
+# written deadline has already passed by then.
+#
+# The rules put the deadline at "the end of the last game of the first week of
+# NFL preseason games", but the rookie draft floats to whatever weekend owners
+# can manage and runs 24 hours per pick, so it has repeatedly finished *after*
+# that date - meaning the deadline expired before anyone could draft:
+#
+#     season  draft ended  first full preseason week ended
+#     2023    Aug 18       Aug 13
+#     2024    Aug  6       Aug 11
+#     2025    Aug 19       Aug 10
+#
+# So the effective deadline is the later of the two. The grace period is
+# deliberately short: at 3 days the written deadline still binds whenever it is
+# workable (2024 lands on Aug 11 either way) and only gives way when the draft
+# has overtaken it. A longer grace would quietly replace the written rule in
+# every year rather than rescue it in the years it breaks - at 7 days even 2024
+# would shift.
+TAXI_DEADLINE_GRACE_DAYS = 3
 
 # Whether the Hall of Fame Game counts as "the first week of preseason games".
 # See the module docstring - False means the first week every team plays.
@@ -239,41 +270,77 @@ def _anchor_date(anchors: dict[str, Any], key: str) -> Optional[date]:
         return None
 
 
+def effective_taxi_deadline(
+    preseason_deadline: Optional[date],
+    draft_end: Optional[date],
+    season_opener: Optional[date] = None,
+    grace_days: Optional[int] = None,
+) -> Optional[date]:
+    """When taxi decisions are actually due.
+
+    The later of the written deadline and a short grace period after the final
+    rookie pick - see TAXI_DEADLINE_GRACE_DAYS for why the grace is short. This
+    keeps the written rule in force in years where the draft finishes in time,
+    and rescues it in the years the draft overtakes it.
+
+    Args:
+        preseason_deadline: End of the first full preseason week.
+        draft_end: Date of the final rookie pick. None means the draft hasn't
+            finished, and the window cannot close before it does.
+        season_opener: Regular-season kickoff. The deadline is clamped to the
+            day before, since taxi decisions can't still be open once games
+            count - unless clamping would put the deadline before the draft
+            even ended, in which case the calendar is already broken and
+            shortening it further helps nobody.
+        grace_days: Override the module default.
+
+    Returns:
+        The deadline, or None when it can't be determined.
+    """
+    if preseason_deadline is None or draft_end is None:
+        return None
+
+    grace = TAXI_DEADLINE_GRACE_DAYS if grace_days is None else grace_days
+    deadline = max(preseason_deadline, draft_end + timedelta(days=grace))
+
+    if season_opener:
+        latest = season_opener - timedelta(days=1)
+        if latest >= draft_end:
+            deadline = min(deadline, latest)
+
+    return deadline
+
+
 def stored_taxi_deadline(
     season: int, anchors: Optional[dict[str, Any]] = None
 ) -> Optional[date]:
-    """The taxi deadline for `season`, if it can be trusted at all.
+    """The taxi deadline for `season`, or None if it can't be determined.
 
-    Returns None - meaning "unknown, fall back to season_type" - in three
-    cases, each of which would otherwise close the addition window wrongly:
+    Returns None - meaning "unknown, fall back to season_type" - in two cases,
+    each of which would otherwise close the addition window wrongly:
 
-    1. **The stored date is for another season.** Anchors are written by a
-       manual (or annual) sync, so a year-old date in the file is normal.
+    1. **The stored date is for another season.** Anchors are written by the
+       upkeep loop, so a year-old date in the file is normal until it re-syncs.
        Comparing today against a previous preseason would report the window
        shut when it isn't.
 
     2. **This season's rookie draft hasn't finished.** The window exists to let
        owners stash the picks they just made, so it cannot close before the
-       draft that supplies them.
+       draft that supplies them. This is the live 2026 state.
 
-    3. **The draft finished after the deadline.** This is not hypothetical: the
-       league's rookie draft ran to Aug 19 in 2025 and Aug 18 in 2023, while
-       the first full week of NFL preseason ended Aug 10 and Aug 13. Applied
-       literally the deadline had already expired before anyone could draft, so
-       in those years the written rule cannot be what's enforced.
-
-    Case 3 needs a ruling rather than a heuristic, so the bot declines to
-    enforce a deadline it can prove is contradictory instead of picking one.
+    Otherwise the deadline comes from `effective_taxi_deadline`, which accounts
+    for a draft that ran past the written date rather than declining to enforce
+    anything at all.
     """
     anchors = load_anchors() if anchors is None else anchors
 
-    deadline = _anchor_date(anchors, ANCHOR_TAXI_DEADLINE)
-    if not deadline:
+    written = _anchor_date(anchors, ANCHOR_TAXI_DEADLINE)
+    if not written:
         return None
 
-    if deadline.year != season:
+    if written.year != season:
         logger.info(
-            f"Stored taxi deadline {deadline} is not for {season}; "
+            f"Stored taxi deadline {written} is not for {season}; "
             "treating as unknown"
         )
         return None
@@ -282,17 +349,19 @@ def stored_taxi_deadline(
     if draft_end is None:
         logger.info(
             f"No completed {season} rookie draft on record; not enforcing the "
-            f"taxi deadline {deadline}"
+            f"taxi deadline {written}"
         )
         return None
 
-    if draft_end > deadline:
-        logger.warning(
-            f"{season} rookie draft ended {draft_end}, after the taxi deadline "
-            f"{deadline} — the written rule can't apply, so not enforcing it"
+    deadline = effective_taxi_deadline(
+        written, draft_end, _anchor_date(anchors, ANCHOR_REGULAR_SEASON_START)
+    )
+    if deadline and deadline != written:
+        logger.info(
+            f"{season} rookie draft ended {draft_end}, so the taxi deadline "
+            f"moves from {written} to {deadline} "
+            f"({TAXI_DEADLINE_GRACE_DAYS} days after the last pick)"
         )
-        return None
-
     return deadline
 
 

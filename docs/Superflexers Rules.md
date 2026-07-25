@@ -87,6 +87,20 @@ Posted in Discord, and the reading the bot implements (`lib/taxi_rules.py`):
 
 > So it seems like sleeper doesn't have a way to actually enforce the taxi squad rules so I'll be checking manually. As a reminder, the only players you can put on your taxi during an off-season are players you took in the rookie draft **that off-season** (so no free agent pick ups). Once they're taken off they can't be put back, and once they are in **year 4** they must be taken off.
 
+### Open: the deadline vs. the draft date
+
+The written deadline above ("the end of the last game of the first week of NFL preseason games") has **expired before the rookie draft finished** in two of the last three years, because the draft floats to whatever weekend owners can manage and then runs 24 hours per pick:
+
+| Season | Rookie draft ended | First full preseason week ended |
+|--------|--------------------|---------------------------------|
+| 2023   | Aug 18             | Aug 13                          |
+| 2024   | Aug 6              | Aug 11                          |
+| 2025   | Aug 19             | Aug 10                          |
+
+Pending a league decision, the bot enforces **the later of the written deadline and 3 days after the final rookie pick**, never past the regular-season opener. That leaves the written rule in force in years like 2024 and only extends it when the draft has overtaken it. This is `TAXI_DEADLINE_GRACE_DAYS` in `lib/nfl_calendar.py` and wants ratifying (or changing) rather than being left as a bot default.
+
+### Settled by the commissioner
+
 Two things this settles that the text above leaves open:
 
 * **The addition window is one off-season wide, not three.** A player drafted in 2024 may *remain* on a slot through 2026, but if he wasn't placed there in 2024 he can never be placed there at all.

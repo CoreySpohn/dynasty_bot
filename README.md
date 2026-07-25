@@ -102,7 +102,17 @@ The **current** draft class is exempt. Rookies land on the bench straight out of
 
 The addition **deadline** takes three sources to get right. nflverse publishes no preseason games at all — 1999–2026, 7,548 games, every one `REG`/`WC`/`DIV`/`CON`/`SB` — so ESPN supplies the preseason schedule, fetched once a year by `/sync_nfl` and stored in `config/deadlines.yaml`. ESPN numbers the Hall of Fame Game as preseason week 1 by itself, so `first_full_week` skips to the first week every team plays; pinning a league-wide roster deadline to one exhibition game would cost owners nine days.
 
-Then a guard: the rookie draft floats to whatever weekend owners can manage and runs 24 hours per pick, so it has finished *after* that deadline in two of the last three years (2025 draft ended Aug 19, preseason week 1 ended Aug 10). `stored_taxi_deadline` refuses to enforce a deadline the draft has overtaken — or one from a season whose draft hasn't finished — and falls back to `season_type` bracketing. A deadline that expires before the draft that fills the slots isn't a deadline the bot should act on.
+Then a reconciliation, because the written deadline doesn't survive contact with the draft calendar. The rookie draft floats to whatever weekend owners can manage and runs 24 hours per pick, so it has finished **after** the written deadline in two of the last three years:
+
+| Season | Rookie draft ended | Written deadline | Enforced |
+|---|---|---|---|
+| 2023 | Aug 18 | Aug 13 | Aug 21 |
+| 2024 | Aug 6 | Aug 11 | **Aug 11** (written rule holds) |
+| 2025 | Aug 19 | Aug 10 | Aug 22 |
+
+`effective_taxi_deadline` takes the later of the written date and `TAXI_DEADLINE_GRACE_DAYS` (3) after the final pick, clamped to before the regular-season opener. The grace is deliberately short so the written rule still binds whenever it's workable — 2024 lands on Aug 11 either way. At 7 days even 2024 would shift, which would quietly replace the written rule every year instead of rescuing it in the years it breaks.
+
+The deadline is still not enforced at all until the season's draft is **complete**, since the window exists to stash the picks you just made and can't close before they exist. That's the live 2026 state, and it's why `/taxieligible` currently reports the window open.
 
 **How it works:**
 - Cost = Draft round + (round - 1) in picks
