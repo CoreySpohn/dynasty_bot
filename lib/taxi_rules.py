@@ -3,12 +3,24 @@
 Sleeper allows any player inside their first three years onto a taxi slot.
 The Superflexers rules are much narrower (docs/Superflexers Rules.md):
 
-1. Only **rookies you drafted yourself** are taxi eligible.
+1. Only **rookies you drafted yourself** are taxi eligible, and they may only
+   be *added* in the off-season you drafted them.
 2. **Once activated, a player can never go back on taxi.**
 3. A player **received in a trade can never be placed on taxi**, even if the
    previous owner had them on theirs.
 4. After **3 seasons** they must be activated or dropped.
 5. 5 taxi slots per team.
+
+Rules 1 and 4 combine into two *different* questions, which this module keeps
+apart deliberately:
+
+- **May a player be added to a slot now?** Only if this is their draft
+  off-season (`evaluate_addition`).
+- **May a player who is already on a slot stay there?** Yes, until the
+  3-season limit expires (`evaluate`).
+
+Conflating them would either wrongly evict legally-stashed second- and
+third-year players, or wrongly offer up old draftees as available additions.
 
 Nothing in Sleeper's data model expresses any of that, so the bot has to
 hold it. Note which parts are derivable and which are not:
@@ -30,6 +42,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date
 from enum import Enum
 from typing import Any, Iterable, Optional
 
@@ -39,17 +52,43 @@ logger = logging.getLogger("dynasty_bot.taxi_rules")
 # season inclusive. Drafted in 2023 with a limit of 3 means 2023, 2024 and
 # 2025 are fine and 2026 is a violation.
 #
-# NOTE: the rules say "After 3 seasons they have to be activated or dropped",
-# which is ambiguous about whether the draft year itself counts. This module
-# takes the stricter reading (it does). Change TAXI_MAX_SEASONS to 4 for the
-# looser one - that is the only edit required, and it moves 6 of the 8
-# current violations.
+# The written rule ("After 3 seasons they have to be activated or dropped") is
+# ambiguous about whether the draft year itself counts. The commissioner's
+# ruling in Discord settles it: "once they are in year 4 they must be taken
+# off" - year 1 being the draft year, so years 1-3 on a slot are legal and the
+# draft year does count.
 TAXI_MAX_SEASONS = 3
 
 # Slots in Sleeper's roster payload, and the ones this module cares about.
 SLOT_TAXI = "taxi"
 SLOT_RESERVE = "reserve"
 SLOT_ACTIVE = "active"
+
+
+ACTIVE_LEAGUE_STATUSES = frozenset(
+    {"pre_draft", "drafting", "in_season", "post_season"}
+)
+
+
+def upcoming_season(league: dict[str, Any], today: Optional[date] = None) -> int:
+    """The season the league is currently playing or preparing for.
+
+    Every taxi question is asked *about a season*: whether a slot may be filled
+    from that year's draft, and whether a player has aged out by then. Sleeper's
+    `season` field can't answer it alone, because a completed league keeps
+    reporting the season that just finished until the commissioner creates the
+    next one. Reading it directly means that in July 2026 the bot judges taxi
+    squads against 2025 - a deadline a year in the past.
+
+    So: use Sleeper's season while that season is live, and otherwise the next
+    one, which is at least the current calendar year.
+    """
+    today = today or date.today()
+    season = int(league.get("season") or 0)
+
+    if league.get("status") in ACTIVE_LEAGUE_STATUSES:
+        return season
+    return max(season + 1, today.year)
 
 
 class Acquisition(str, Enum):
@@ -69,6 +108,9 @@ class Ineligible(str, Enum):
     ACQUIRED_BY_TRADE = "acquired_by_trade"
     ALREADY_ACTIVATED = "already_activated"
     SEASONS_EXPIRED = "seasons_expired"
+    # Additions only. A player already legally on a slot keeps it; this says
+    # they can't be *put* there now.
+    OUTSIDE_ADDITION_WINDOW = "outside_addition_window"
 
 
 REASON_TEXT = {
@@ -76,6 +118,7 @@ REASON_TEXT = {
     Ineligible.ACQUIRED_BY_TRADE: "acquired by trade",
     Ineligible.ALREADY_ACTIVATED: "already activated once",
     Ineligible.SEASONS_EXPIRED: "past the 3-season limit",
+    Ineligible.OUTSIDE_ADDITION_WINDOW: "not from this year's rookie draft",
 }
 
 
@@ -114,7 +157,12 @@ class Eligibility:
 
 
 def evaluate(record: TaxiRecord, season: int) -> Eligibility:
-    """Decide whether `record`'s player may be on taxi in `season`.
+    """Decide whether `record`'s player may *occupy* a taxi slot in `season`.
+
+    This is the continuation question - a rookie legally stashed in 2025 is
+    still legally stashed in 2026. For whether they may be *moved onto* a slot
+    right now, use `evaluate_addition`, which additionally requires that this
+    be their draft off-season.
 
     Reasons accumulate rather than short-circuiting, so an audit can say
     "traded for AND past the limit" instead of only the first thing checked.
@@ -133,6 +181,33 @@ def evaluate(record: TaxiRecord, season: int) -> Eligibility:
     used = record.seasons_used(season)
     if used is not None and used >= TAXI_MAX_SEASONS:
         reasons.append(Ineligible.SEASONS_EXPIRED)
+
+    return Eligibility(record.player_id, not reasons, reasons)
+
+
+def evaluate_addition(record: TaxiRecord, season: int) -> Eligibility:
+    """Decide whether `record`'s player may be *moved onto* a slot in `season`.
+
+    Everything `evaluate` checks, plus the addition window. From the
+    commissioner's ruling: "the only players you can put on your taxi during an
+    off-season are players you took in the rookie draft that off-season (so no
+    free agent pick ups)."
+
+    So the window is one off-season wide, not three. A player drafted in 2024
+    may *stay* on a slot through 2026, but if they weren't put there in 2024
+    they can never be put there at all.
+
+    Note this is season-granular. The rules also set a hard deadline - "the end
+    of the last game of the first week of NFL preseason games" - which this
+    can't express, so between that deadline and the end of the calendar season
+    the answer here is permissive by up to a few weeks. Reporting a player as
+    addable slightly too long is the safe direction: the alternative would be
+    hiding legal moves during the window that actually matters.
+    """
+    reasons = list(evaluate(record, season).reasons)
+
+    if record.draft_season != season:
+        reasons.append(Ineligible.OUTSIDE_ADDITION_WINDOW)
 
     return Eligibility(record.player_id, not reasons, reasons)
 
@@ -290,16 +365,39 @@ def build_records(
     return records
 
 
+def presumed_activated(record: TaxiRecord, season: int) -> bool:
+    """Whether a backfill should assume this player was already activated.
+
+    Activation history is the one taxi fact Sleeper can never return, so
+    seeding the ledger means inferring it. An own-draftee from a *previous*
+    off-season who now sits on the active roster must have been activated at
+    some point: taxi is the only other place they could have been.
+
+    This year's draftees are deliberately excluded. They arrive on the bench
+    straight out of the draft and their addition window is still open, so
+    "on the active roster" is their normal state rather than evidence of an
+    activation - and marking them would permanently close a slot the owner is
+    still entitled to fill.
+    """
+    return (
+        record.acquisition == Acquisition.ROOKIE_DRAFT
+        and not record.on_taxi
+        and record.draft_season is not None
+        and record.draft_season < season
+    )
+
+
 def eligible_additions(
     records: Iterable[TaxiRecord], season: int
 ) -> list[TaxiRecord]:
     """Players an owner could legally move onto their taxi squad now.
 
     Excludes anyone already occupying a slot, since the question being asked
-    is what could be *added*.
+    is what could be *added*. Uses `evaluate_addition`, so outside a draft
+    off-season this is empty by design rather than by accident.
     """
     return [
         record
         for record in records
-        if not record.on_taxi and evaluate(record, season).eligible
+        if not record.on_taxi and evaluate_addition(record, season).eligible
     ]

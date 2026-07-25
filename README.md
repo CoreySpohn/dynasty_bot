@@ -70,19 +70,21 @@ Hourly-with-low-odds rather than one coarse timer, deliberately: a `tasks.loop(h
 | `/raidhistory [season]` | View raid history |
 | `/taxisquad [team]` | View taxi squads |
 | `/taxiaudit [season]` | Check every taxi squad against **league** rules, not Sleeper's |
-| `/taxieligible [team]` | Who could still legally be moved onto a taxi slot |
+| `/taxieligible [team]` | Who could legally be moved onto a taxi slot *right now* |
 
-**Admin:** `/taxibackfill` seeds the ledger from draft history — run this once before trusting the two commands above.
+**Admin:** `/taxibackfill` seeds the ledger from draft history. Worth running once, though it only changes answers during a draft off-season — outside one, no addition is legal anyway.
 
 #### Why the bot has to track this itself
 
 Sleeper allows any player inside their first three years onto a taxi slot. League rules (`docs/Superflexers Rules.md`) are much narrower, and Sleeper implements none of it:
 
-1. Only **rookies you drafted yourself** are eligible.
+1. Only **rookies you drafted yourself** are eligible, and only in the off-season you drafted them.
 2. **Once activated, a player can never go back on taxi.**
 3. A player **received in a trade** can never be placed on taxi — even if the previous owner had them on theirs.
 4. After **3 seasons** they must be activated or dropped.
 5. 5 slots per team.
+
+Rules 1 and 4 answer two different questions, and the engine keeps them apart. **Adding** a player is legal only in their draft off-season (`evaluate_addition`); **keeping** one already on a slot is legal for three seasons (`evaluate`). Conflating them would either evict legally-stashed sophomores or advertise old draftees as available. Both readings come from the commissioner's Discord ruling, quoted in the rules doc — the written text alone settles neither.
 
 `lib/taxi_rules.py` holds the rule engine. Note which inputs are derived and which are stored:
 
@@ -92,7 +94,11 @@ Sleeper allows any player inside their first three years onto a taxi slot. Leagu
 
 Because an activation doesn't change *who* is rostered, the snapshot's skip-if-unchanged logic compares slots as well as composition — otherwise the one event these rules depend on would be silently dropped.
 
-**The backfill is conservative by design.** Activations before tracking began are unrecoverable, so any own-draftee currently on the *active* roster is recorded as already activated. Under league rules they couldn't return to taxi anyway, so this never wrongly re-opens a slot. Before backfilling, both commands warn that they're working from incomplete data — otherwise 70 players look eligible when the true answer is 0.
+**The backfill is conservative by design.** Activations before tracking began are unrecoverable, so an own-draftee from a *past* class who is currently on the active roster is recorded as already activated — taxi is the only other place they could have been. Under league rules they couldn't return anyway, so this never wrongly re-opens a slot.
+
+The **current** draft class is exempt. Rookies land on the bench straight out of the draft, so "on the active roster" is their normal state rather than evidence of an activation; presuming otherwise would permanently close a slot the owner is still entitled to fill.
+
+`upcoming_season` decides which season to judge against, because Sleeper's `season` field keeps reporting the season that just finished until the commissioner creates the next league. Reading it directly meant that in July 2026 the bot audited against the 2025 deadline — a year in the past — and offered up the 2025 draft class as addable long after that window shut.
 
 **How it works:**
 - Cost = Draft round + (round - 1) in picks

@@ -81,6 +81,17 @@ Claiming will not be in place until the 2020 season due to us not having a rooki
 
 Taxi squad decisions must be made by the end of the last game of the first week of NFL preseason games.
 
+## Commissioner clarification
+
+Posted in Discord, and the reading the bot implements (`lib/taxi_rules.py`):
+
+> So it seems like sleeper doesn't have a way to actually enforce the taxi squad rules so I'll be checking manually. As a reminder, the only players you can put on your taxi during an off-season are players you took in the rookie draft **that off-season** (so no free agent pick ups). Once they're taken off they can't be put back, and once they are in **year 4** they must be taken off.
+
+Two things this settles that the text above leaves open:
+
+* **The addition window is one off-season wide, not three.** A player drafted in 2024 may *remain* on a slot through 2026, but if he wasn't placed there in 2024 he can never be placed there at all.
+* **The draft year counts toward the 3 seasons.** "Year 4" means years 1–3 on a slot are legal, so a 2023 draftee is a violation in 2026.
+
 # Free Agent Acquisition Budget (Kohl’s Cash)
 
 Fake money, called Kohl’s Cash, will be allocated to every team for them to spend on free agents  on waivers during the season. Waiver claims are awarded to the highest bid. There is a tie-breaker that works like rolling waivers where every time an owner wins a bid they move to last place in the tie-breaker. Waivers are processed in order by highest bid. 

@@ -4,6 +4,8 @@ These rules exist precisely because Sleeper doesn't implement them, so there
 is no upstream behaviour to fall back on — the tests are the specification.
 """
 
+from datetime import date
+
 import pytest
 
 from lib.taxi_rules import (
@@ -16,8 +18,11 @@ from lib.taxi_rules import (
     build_records,
     eligible_additions,
     evaluate,
+    evaluate_addition,
     over_slot_limit,
+    presumed_activated,
     slot_of,
+    upcoming_season,
 )
 
 
@@ -34,6 +39,32 @@ def _record(**kwargs):
     )
     base.update(kwargs)
     return TaxiRecord(**base)
+
+
+class TestUpcomingSeason:
+    def test_uses_sleepers_season_while_it_is_live(self):
+        for status in ("pre_draft", "drafting", "in_season", "post_season"):
+            league = {"season": "2026", "status": status}
+
+            assert upcoming_season(league, date(2026, 10, 1)) == 2026
+
+    def test_rolls_forward_when_the_league_is_stale(self):
+        """The case that made this necessary: it is mid-2026, the 2025 season
+        finished, and nobody has created the 2026 league yet. Judging taxi
+        squads against 2025 would be judging against a dead deadline."""
+        league = {"season": "2025", "status": "complete"}
+
+        assert upcoming_season(league, date(2026, 7, 25)) == 2026
+
+    def test_rolls_forward_before_the_calendar_turns_over(self):
+        league = {"season": "2025", "status": "complete"}
+
+        assert upcoming_season(league, date(2025, 12, 31)) == 2026
+
+    def test_handles_a_league_stale_by_more_than_a_year(self):
+        league = {"season": "2024", "status": "complete"}
+
+        assert upcoming_season(league, date(2026, 7, 25)) == 2026
 
 
 class TestEvaluate:
@@ -96,6 +127,40 @@ class TestEvaluate:
 
         assert Ineligible.SEASONS_EXPIRED not in result.reasons
         assert Ineligible.NOT_OWN_DRAFTEE in result.reasons
+
+
+class TestEvaluateAddition:
+    """The addition window: "the only players you can put on your taxi during
+    an off-season are players you took in the rookie draft that off-season"."""
+
+    def test_this_years_draftee_can_be_added(self):
+        assert evaluate_addition(_record(draft_season=2025), season=2025).eligible
+
+    def test_last_years_draftee_cannot_be_added(self):
+        """Still legal to *keep* on a slot, but the window has closed."""
+        record = _record(draft_season=2024)
+
+        assert evaluate(record, season=2025).eligible is True
+        result = evaluate_addition(record, season=2025)
+        assert result.eligible is False
+        assert result.reasons == [Ineligible.OUTSIDE_ADDITION_WINDOW]
+
+    def test_undrafted_player_can_never_be_added(self):
+        result = evaluate_addition(
+            _record(acquisition=Acquisition.OTHER, draft_season=None), season=2025
+        )
+
+        assert result.eligible is False
+        assert Ineligible.OUTSIDE_ADDITION_WINDOW in result.reasons
+        assert Ineligible.NOT_OWN_DRAFTEE in result.reasons
+
+    def test_still_applies_the_other_rules(self):
+        result = evaluate_addition(
+            _record(draft_season=2025, activated=True), season=2025
+        )
+
+        assert result.eligible is False
+        assert result.reasons == [Ineligible.ALREADY_ACTIVATED]
 
 
 class TestAudit:
@@ -232,6 +297,40 @@ class TestBuildRecords:
         assert records["own_pick"].activated_season == 2025
 
 
+class TestPresumedActivated:
+    """Seeding the ledger has to guess at activation history, since Sleeper
+    doesn't keep it. These are the guesses it is allowed to make."""
+
+    def test_prior_class_on_active_roster_is_presumed_activated(self):
+        record = _record(draft_season=2024, on_taxi=False)
+
+        assert presumed_activated(record, 2026) is True
+
+    def test_current_class_on_bench_is_not(self):
+        """The bug this guards: rookies sit on the bench straight out of the
+        draft. Presuming activation would close a slot they can still use."""
+        record = _record(draft_season=2026, on_taxi=False)
+
+        assert presumed_activated(record, 2026) is False
+
+    def test_player_still_on_taxi_is_not(self):
+        assert presumed_activated(_record(draft_season=2024, on_taxi=True), 2026) is False
+
+    def test_non_draftee_is_not(self):
+        record = _record(
+            draft_season=2024, on_taxi=False, acquisition=Acquisition.OTHER
+        )
+
+        assert presumed_activated(record, 2026) is False
+
+    def test_undrafted_player_is_not(self):
+        record = _record(
+            draft_season=None, on_taxi=False, acquisition=Acquisition.ROOKIE_DRAFT
+        )
+
+        assert presumed_activated(record, 2026) is False
+
+
 class TestEligibleAdditions:
     def test_excludes_players_already_on_taxi(self):
         records = [_record(player_id="on", on_taxi=True)]
@@ -245,9 +344,32 @@ class TestEligibleAdditions:
 
     def test_excludes_ineligible_bench_players(self):
         records = [
-            _record(player_id="traded", on_taxi=False, acquisition=Acquisition.TRADE),
+            _record(
+                player_id="traded",
+                on_taxi=False,
+                acquisition=Acquisition.TRADE,
+                draft_season=2026,
+            ),
             _record(player_id="old", on_taxi=False, draft_season=2020),
-            _record(player_id="used", on_taxi=False, activated=True),
+            _record(
+                player_id="used", on_taxi=False, activated=True, draft_season=2026
+            ),
+        ]
+
+        assert eligible_additions(records, 2026) == []
+
+    def test_excludes_earlier_draft_classes(self):
+        """The rule that Sleeper's "first three years" check gets wrong: a
+        second-year player is not an available addition even though he could
+        legally still be sitting on a slot."""
+        records = [_record(player_id="sophomore", on_taxi=False, draft_season=2025)]
+
+        assert eligible_additions(records, 2026) == []
+
+    def test_is_empty_outside_a_draft_off_season(self):
+        records = [
+            _record(player_id="a", on_taxi=False, draft_season=2024),
+            _record(player_id="b", on_taxi=False, draft_season=2025),
         ]
 
         assert eligible_additions(records, 2026) == []

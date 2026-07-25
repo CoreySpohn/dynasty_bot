@@ -25,6 +25,8 @@ from lib.taxi_rules import (
     build_records,
     eligible_additions,
     over_slot_limit,
+    presumed_activated,
+    upcoming_season,
 )
 
 if TYPE_CHECKING:
@@ -570,13 +572,14 @@ class TaxiRaiding(commands.Cog):
         return row[0] if row else 0
 
     # Shown whenever the ledger hasn't been seeded. Without recorded
-    # activations, every own-draftee sitting on the active roster looks
-    # taxi-eligible - which reads as 70 eligible players when the real answer
-    # is zero. Better to say so than to quietly present the wrong number.
+    # activations, an own-draftee who was stashed on taxi and then activated
+    # looks eligible again, since nothing upstream remembers the activation.
+    # The addition window limits the damage to the current draft class, but
+    # better to say so than to quietly present a number that might be wrong.
     UNSEEDED_WARNING = (
         "⚠️ The taxi ledger is empty, so no activations are on record. "
-        "Anyone an owner drafted looks eligible even if they've been starting "
-        "for two years. Run `/taxibackfill` first."
+        "A rookie who was stashed and then activated this off-season will "
+        "wrongly look eligible again. Run `/taxibackfill` first."
     )
 
     async def _taxi_context(self) -> dict:
@@ -599,7 +602,10 @@ class TaxiRaiding(commands.Cog):
                 }.get(r.get("owner_id", ""), f"Team {r['roster_id']}")
                 for r in rosters
             },
-            "season": int(league.get("season") or 0),
+            # The season being prepared for, which is not always the one
+            # Sleeper reports - see upcoming_season.
+            "season": upcoming_season(league),
+            "league_season": int(league.get("season") or 0),
             "taxi_slots": league.get("settings", {}).get("taxi_slots", 5),
             "records": build_records(rosters, draft_index, traded_for, activated),
         }
@@ -681,12 +687,14 @@ class TaxiRaiding(commands.Cog):
                     inline=False,
                 )
 
-            embed.set_footer(
-                text=(
-                    f"{len(violations)} violation(s) • judged against the "
-                    f"{target} season"
+            footer = f"{len(violations)} violation(s) • judged against {target}"
+            if season is None and target != ctx["league_season"]:
+                # Sleeper still reports the finished season until the next
+                # league is created; say so rather than look like a bug.
+                footer += (
+                    f" (Sleeper still reports {ctx['league_season']} as current)"
                 )
-            )
+            embed.set_footer(text=footer)
             if not await self._ledger_size():
                 # Age and origin violations are unaffected by the ledger, but
                 # "already activated" ones can't be detected without it.
@@ -716,6 +724,16 @@ class TaxiRaiding(commands.Cog):
         try:
             ctx = await self._taxi_context()
             eligible = eligible_additions(ctx["records"], ctx["season"])
+            drafted_this_year = any(
+                r.draft_season == ctx["season"] for r in ctx["records"]
+            )
+
+            # How many slots each owner has left, since "who could be added" is
+            # academic for anyone already at 5.
+            free_slots = {
+                r["roster_id"]: ctx["taxi_slots"] - len(r.get("taxi") or [])
+                for r in ctx["rosters"]
+            }
 
             by_owner: dict[str, list[str]] = {}
             for record in eligible:
@@ -724,17 +742,26 @@ class TaxiRaiding(commands.Cog):
                 )
                 if team_name and team_name.lower() not in owner.lower():
                     continue
+                free = free_slots.get(record.roster_id, ctx["taxi_slots"])
+                header = (
+                    f"{owner} — {free} slot(s) free"
+                    if free > 0
+                    else f"{owner} — no slots free"
+                )
                 label = self._player_name(ctx["players"], record.player_id)
                 if record.draft_season:
                     label += f" ({record.draft_season} rd{record.draft_round})"
-                by_owner.setdefault(owner, []).append(f"• {label}")
+                by_owner.setdefault(header, []).append(f"• {label}")
 
             embed = discord.Embed(
                 title="🚕 Taxi-Eligible Players",
                 description=(
-                    "Players still on the active roster who could legally be "
-                    "moved onto a taxi slot: own draftees, never activated, "
-                    f"within {TAXI_MAX_SEASONS} seasons of their draft."
+                    "Players who could legally be moved onto a taxi slot right "
+                    f"now: **{ctx['season']} rookie-draft picks of your own**, "
+                    "never activated. Players from earlier drafts can stay on a "
+                    f"slot up to {TAXI_MAX_SEASONS} seasons, but can no longer "
+                    "be added.\n*Deadline: end of the last game of the first "
+                    "week of NFL preseason.*"
                 ),
                 color=discord.Color.blue(),
             )
@@ -751,9 +778,13 @@ class TaxiRaiding(commands.Cog):
                 embed.add_field(
                     name="Nobody",
                     value=(
-                        "No eligible players. Under league rules taxi slots can "
-                        "only be filled immediately after the rookie draft, from "
-                        "that owner's own picks."
+                        f"No {ctx['season']} rookie draft has happened yet, so "
+                        "there is nobody who could legally be added. This will "
+                        "populate once that draft is in Sleeper."
+                        if not drafted_this_year
+                        else "Every own pick from the "
+                        f"{ctx['season']} draft is already on a taxi slot or "
+                        "has been activated."
                     ),
                     inline=False,
                 )
@@ -788,10 +819,7 @@ class TaxiRaiding(commands.Cog):
                     # Only own-draftees can ever matter for taxi purposes.
                     continue
 
-                # On the active roster and eligible by age => must have been
-                # activated at some point, since taxi is the only other place
-                # an own-draftee could have been.
-                treat_as_activated = not record.on_taxi
+                treat_as_activated = presumed_activated(record, season)
                 async with db.execute(
                     """
                     INSERT INTO taxi_ledger (
@@ -811,7 +839,11 @@ class TaxiRaiding(commands.Cog):
                         record.draft_season,
                         record.draft_round,
                         season if treat_as_activated else None,
-                        "backfilled from draft history",
+                        # The real activation season is unrecoverable, so this
+                        # records when we observed it, not when it happened.
+                        "backfilled; activation season inferred, not observed"
+                        if treat_as_activated
+                        else "backfilled from draft history",
                     ),
                 ) as cursor:
                     written += cursor.rowcount or 0
@@ -821,12 +853,14 @@ class TaxiRaiding(commands.Cog):
             violations = audit(ctx["records"], season)
             await interaction.followup.send(
                 f"✅ Taxi ledger seeded: **{written}** own-draftee record(s), "
-                f"**{activations}** treated as already activated (currently on "
-                "the active roster).\n"
+                f"**{activations}** treated as already activated (on the active "
+                f"roster from an earlier draft class).\n"
                 f"Draft origin came from Sleeper and is exact. Activations "
-                f"before today aren't recoverable from Sleeper, so anyone "
-                f"already off taxi is assumed activated — conservative, since "
-                f"they'd be ineligible either way.\n"
+                f"before today aren't recoverable from Sleeper, so anyone from "
+                f"a past draft who is already off taxi is assumed activated — "
+                f"conservative, since they'd be ineligible either way. "
+                f"This year's draftees are left untouched: their window is "
+                f"still open.\n"
                 f"`/taxiaudit` currently reports **{len(violations)}** "
                 f"violation(s) for {season}."
             )

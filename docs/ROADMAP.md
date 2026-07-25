@@ -89,7 +89,13 @@ a shared **derivation layer**, not a table.
   league's taxi rules, so the bot holds them. Draft origin is derived from
   the draft endpoints (verified complete for all 46 current taxi players);
   activation history can't be, so `roster_snapshots` now records slots and
-  `taxi_ledger` keeps observed activations
+  `taxi_ledger` keeps observed activations. Two rules the commissioner's
+  Discord ruling settled (quoted in `docs/Superflexers Rules.md`): the
+  addition window is **one off-season wide**, so only that year's own draftees
+  may be *added* even though earlier ones may *stay*; and the draft year
+  counts toward the 3-season limit. `upcoming_season` picks the season to
+  judge against, since a completed Sleeper league keeps reporting the season
+  that just ended until the next one is created
 
 ---
 
@@ -206,15 +212,18 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
   clinched/eliminated could produce those sentences but doesn't.
 - **The simulation ignores the playoff bracket itself.** Odds are for
   *making* the playoffs, not winning them.
-- **The 3-season taxi rule is ambiguous and needs a ruling.** "After 3
-  seasons they have to be activated or dropped" doesn't say whether the draft
-  year itself counts. `TAXI_MAX_SEASONS = 3` takes the stricter reading
-  (it does), which flags 8 players for 2026; the looser reading (`= 4`)
-  flags 2. One-line change either way.
+- **The taxi addition deadline is season-granular, not date-granular.** The
+  rules set it at "the end of the last game of the first week of NFL preseason
+  games", which the bot can't see. `evaluate_addition` allows additions for
+  the whole of the draft year, so between that deadline and year end it is
+  permissive by a few weeks. The safe direction, but not exact.
 - **Taxi activations before 2026-07-25 are assumed, not observed.** Sleeper
   can't tell us who was activated historically, so `/taxibackfill` records
-  every own-draftee currently off taxi as already activated. Conservative -
-  they'd be ineligible either way - but it isn't evidence.
+  every own-draftee from a *past* draft class who is currently off taxi as
+  already activated. Conservative - they'd be ineligible either way - but it
+  isn't evidence, and the `taxi_ledger` notes say so. The current draft class
+  is deliberately exempt: they sit on the bench straight out of the draft, so
+  presuming activation would close a slot they can still legally fill.
 - **Trade-acquired players aren't auto-detected yet.** Rule 3 (a player
   received in a trade can never go on taxi) is implemented in the engine and
   read from `taxi_ledger`, but nothing yet walks `get_transactions` to
