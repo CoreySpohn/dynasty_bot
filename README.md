@@ -116,12 +116,12 @@ Then a guard: the rookie draft floats to whatever weekend owners can manage and 
 
 | Command | Description |
 |---------|-------------|
-| `/sync_nfl [year]` | Refresh NFL date anchors (regular season, playoffs, preseason, taxi deadline) |
+| `/sync_nfl [year]` | Refresh NFL date anchors (regular season, playoffs, preseason, taxi deadline) into `config/nfl_anchors.yaml` |
 | `/state [new_state]` | View or override the league state |
 
 **Both of these now run themselves.** `SchedulerCog.upkeep_loop` ticks every 12 hours and:
 
-1. **Re-syncs NFL anchors** when they're missing, from the wrong season, or still incomplete — the last case matters because the rookie draft date isn't knowable in advance, so it keeps checking until the draft finishes.
+1. **Re-syncs NFL anchors** when they're missing, from the wrong season, or still incomplete — the last case matters because the rookie draft date isn't knowable in advance, so it keeps checking until the draft finishes. When *only* that date is outstanding it polls Sleeper alone, rather than re-downloading the nflverse schedule and re-hitting ESPN twice a day for weeks.
 2. **Advances the league state** from live signals rather than a remembered slash command, announcing each change to the commissioner channel with its reason.
 
 | State | What decides it |
@@ -129,6 +129,8 @@ Then a guard: the rookie draft floats to whatever weekend owners can manage and 
 | `in_season` | NFL `season_type` is regular/post, or we're within a day of the opener |
 | `pre_season` | NFL preseason started, or this year's rookie draft finished |
 | `off_season` | Otherwise |
+
+Generated dates live in **`config/nfl_anchors.yaml`**, not in `deadlines.yaml`. That split exists because it was got wrong once: the sync wrote anchors into the hand-maintained `deadlines.yaml` via `yaml.dump`, which rewrites the whole file and strips every comment. Harmless while only a human ran `/sync_nfl`; a guaranteed loss twice a day once the loop automated it. Bot-written data and hand-written config are now separate files, and identical writes are skipped entirely.
 
 Two deliberate limits. It **only moves forward** — the `in_season → off_season` wrap is announced as a suggestion, because that transition is exactly when a human is deciding the offseason calendar and resetting it underneath them would be worse than waiting. And `pre_draft` is never derived: the config defines it as "after rules voted", which has no API, and it isn't in `VALID_STATES` anyway.
 

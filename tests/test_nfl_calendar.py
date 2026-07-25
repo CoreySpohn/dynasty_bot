@@ -20,6 +20,7 @@ from lib.nfl_calendar import (
     parse_preseason_week,
     parse_preseason_weeks,
     preseason_bounds,
+    save_anchors,
     stored_taxi_deadline,
     taxi_deadline,
 )
@@ -168,8 +169,15 @@ class TestStoredTaxiDeadline:
 
 
 class TestLoadAnchors:
-    def test_reads_the_anchors_block(self, tmp_path):
-        path = tmp_path / "deadlines.yaml"
+    def test_reads_a_bare_mapping(self, tmp_path):
+        path = tmp_path / "nfl_anchors.yaml"
+        path.write_text(yaml.dump({"a": "2026-01-01"}))
+
+        assert load_anchors(path) == {"a": "2026-01-01"}
+
+    def test_reads_a_nested_block(self, tmp_path):
+        """Tolerates the legacy shape in case anchors are pasted across."""
+        path = tmp_path / "nfl_anchors.yaml"
         path.write_text(yaml.dump({"nfl_anchors": {"a": "2026-01-01"}}))
 
         assert load_anchors(path) == {"a": "2026-01-01"}
@@ -177,8 +185,42 @@ class TestLoadAnchors:
     def test_missing_file_is_empty(self, tmp_path):
         assert load_anchors(tmp_path / "nope.yaml") == {}
 
-    def test_file_without_anchors_is_empty(self, tmp_path):
-        path = tmp_path / "deadlines.yaml"
-        path.write_text(yaml.dump({"deadlines": []}))
+    def test_malformed_file_is_empty(self, tmp_path):
+        path = tmp_path / "nfl_anchors.yaml"
+        path.write_text("{[not valid yaml")
 
         assert load_anchors(path) == {}
+
+
+class TestSaveAnchors:
+    ANCHORS = {"nfl_taxi_deadline": "2026-08-16", "rookie_draft_end": None}
+
+    def test_writes_and_round_trips(self, tmp_path):
+        path = tmp_path / "nfl_anchors.yaml"
+
+        assert save_anchors(self.ANCHORS, path) is True
+        assert load_anchors(path) == self.ANCHORS
+
+    def test_skips_an_identical_write(self, tmp_path):
+        """The upkeep loop re-checks every 12 hours for the weeks it can take
+        the draft to finish; rewriting an unchanged file each time is waste."""
+        path = tmp_path / "nfl_anchors.yaml"
+        save_anchors(self.ANCHORS, path)
+        before = path.stat().st_mtime_ns
+
+        assert save_anchors(self.ANCHORS, path) is False
+        assert path.stat().st_mtime_ns == before
+
+    def test_writes_when_a_value_changes(self, tmp_path):
+        path = tmp_path / "nfl_anchors.yaml"
+        save_anchors(self.ANCHORS, path)
+        changed = {**self.ANCHORS, "rookie_draft_end": "2026-08-19"}
+
+        assert save_anchors(changed, path) is True
+        assert load_anchors(path)["rookie_draft_end"] == "2026-08-19"
+
+    def test_keeps_a_generated_header(self, tmp_path):
+        path = tmp_path / "nfl_anchors.yaml"
+        save_anchors(self.ANCHORS, path)
+
+        assert path.read_text().startswith("#")

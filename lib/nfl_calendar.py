@@ -47,6 +47,17 @@ import yaml
 logger = logging.getLogger("dynasty_bot.nfl_calendar")
 
 # Where /sync_nfl stores the dates it fetched, so reading them costs nothing.
+#
+# Its own file, deliberately. These anchors used to live under an `nfl_anchors`
+# key inside deadlines.yaml, which the scheduler rewrote wholesale with
+# yaml.dump - stripping every comment out of a file that is otherwise
+# hand-maintained. That was survivable while only a human running /sync_nfl
+# triggered it; once the upkeep loop started syncing automatically it became a
+# guaranteed loss twice a day. Bot-written data and hand-written config now live
+# in separate files, so neither can clobber the other.
+ANCHORS_PATH = Path(__file__).parent.parent / "config" / "nfl_anchors.yaml"
+
+# Read-only fallback for anchors written before the split.
 DEADLINES_PATH = Path(__file__).parent.parent / "config" / "deadlines.yaml"
 
 # Anchor keys written by /sync_nfl.
@@ -163,15 +174,57 @@ def taxi_deadline(weeks: Iterable[PreseasonWeek]) -> Optional[date]:
     return week.last_game if week else None
 
 
-def load_anchors(path: Optional[Path] = None) -> dict[str, Any]:
-    """The `nfl_anchors` block from deadlines.yaml, empty if unavailable."""
+def _read_yaml(path: Path) -> dict[str, Any]:
     try:
-        with open(path or DEADLINES_PATH) as f:
-            config = yaml.safe_load(f) or {}
-    except (FileNotFoundError, yaml.YAMLError) as e:
-        logger.warning(f"Could not read NFL anchors: {e}")
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except FileNotFoundError:
         return {}
-    return config.get("nfl_anchors") or {}
+    except yaml.YAMLError as e:
+        logger.warning(f"Could not parse {path}: {e}")
+        return {}
+
+
+def load_anchors(path: Optional[Path] = None) -> dict[str, Any]:
+    """The stored NFL date anchors, empty if none have been synced.
+
+    Reads `config/nfl_anchors.yaml`, falling back to the legacy `nfl_anchors`
+    block inside `deadlines.yaml` so anchors synced before the files were split
+    still resolve until the next sync rewrites them in the new location.
+    """
+    anchors = _read_yaml(path or ANCHORS_PATH)
+    if anchors:
+        # Tolerate either a bare mapping or one nested under `nfl_anchors`.
+        return anchors.get("nfl_anchors") or anchors
+
+    if path is None:
+        legacy = _read_yaml(DEADLINES_PATH).get("nfl_anchors") or {}
+        if legacy:
+            logger.info("Using legacy nfl_anchors from deadlines.yaml")
+        return legacy
+    return {}
+
+
+def save_anchors(anchors: dict[str, Any], path: Optional[Path] = None) -> bool:
+    """Write anchors, returning whether anything actually changed.
+
+    Skipping no-op writes matters because the upkeep loop re-syncs on every tick
+    until the rookie draft date lands, which can be weeks - there's no reason to
+    rewrite an identical file 60 times.
+    """
+    target = path or ANCHORS_PATH
+    if _read_yaml(target) == anchors:
+        return False
+
+    with open(target, "w") as f:
+        f.write(
+            "# NFL date anchors, written by /sync_nfl and the scheduler's\n"
+            "# upkeep loop. Generated - edit deadlines.yaml instead.\n"
+        )
+        yaml.dump(anchors, f, default_flow_style=False, sort_keys=False,
+                  allow_unicode=True)
+    logger.info(f"Wrote {len(anchors)} NFL anchor(s) to {target.name}")
+    return True
 
 
 def _anchor_date(anchors: dict[str, Any], key: str) -> Optional[date]:

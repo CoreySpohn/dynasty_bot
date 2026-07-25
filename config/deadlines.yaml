@@ -231,9 +231,7 @@ deadlines:
 # =========================================================================
 # NFL Schedule Anchors (auto-populated via /sync_nfl)
 # =========================================================================
-nfl_anchors:
-  super_bowl: '2025-02-09'
-  nfl_preseason_start: '2025-07-31'
-  nfl_preseason_end: '2025-08-28'
-  nfl_regular_season_start: '2025-09-04'
-  nfl_week_12_end: '2025-11-24'
+
+# NFL date anchors moved to config/nfl_anchors.yaml, which the bot
+# rewrites automatically. Keeping generated dates out of this file is what
+# lets these comments survive a sync.

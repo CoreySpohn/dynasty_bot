@@ -32,7 +32,9 @@ from lib.nfl_calendar import (
     ANCHOR_PRESEASON_START,
     ANCHOR_ROOKIE_DRAFT_END,
     ANCHOR_TAXI_DEADLINE,
+    load_anchors,
     preseason_bounds,
+    save_anchors,
     taxi_deadline,
 )
 from lib.taxi_rules import upcoming_season
@@ -82,6 +84,8 @@ class SchedulerCog(commands.Cog):
         # Load configurations
         self.state_config = self._load_state()
         self.deadlines_config = self._load_deadlines()
+        # Bot-written NFL dates, kept out of the hand-maintained deadlines file.
+        self.nfl_anchors = load_anchors()
         
         # Start the reminder loop
         self.reminder_loop.start()
@@ -127,13 +131,15 @@ class SchedulerCog(commands.Cog):
     def _save_state(self) -> None:
         """Save league state to YAML config."""
         with open(LEAGUE_STATE_PATH, 'w') as f:
-            yaml.dump(self.state_config, f, default_flow_style=False, sort_keys=False)
+            yaml.dump(self.state_config, f, default_flow_style=False,
+                      sort_keys=False, allow_unicode=True, width=4096)
         logger.info("Saved league state config")
     
     def _save_deadlines(self) -> None:
         """Save deadlines to YAML config."""
         with open(DEADLINES_PATH, 'w') as f:
-            yaml.dump(self.deadlines_config, f, default_flow_style=False, sort_keys=False)
+            yaml.dump(self.deadlines_config, f, default_flow_style=False,
+                      sort_keys=False, allow_unicode=True, width=4096)
         logger.info("Saved deadlines config")
     
     @property
@@ -224,7 +230,18 @@ class SchedulerCog(commands.Cog):
             'state_suggested': None,
         }
 
-        if self._anchors_need_sync(season):
+        if self._only_draft_date_missing(season):
+            # Everything else is current and the draft simply hasn't finished.
+            # Poll just that one date rather than re-downloading the nflverse
+            # schedule and re-hitting ESPN four times, twice a day, for the
+            # weeks it can take the draft to land.
+            draft_end = await self._rookie_draft_end(season)
+            if draft_end:
+                self.nfl_anchors[ANCHOR_ROOKIE_DRAFT_END] = draft_end.isoformat()
+                save_anchors(self.nfl_anchors)
+                result['anchors_synced'] = True
+                logger.info(f"Recorded {season} rookie draft end {draft_end}")
+        elif self._anchors_need_sync(season):
             anchors = await self._fetch_anchors(season)
             self._store_anchors(anchors)
             result['anchors_synced'] = True
@@ -233,27 +250,38 @@ class SchedulerCog(commands.Cog):
         result.update(await self._advance_state())
         return result
 
+    def _schedule_anchors_current(self, season: int) -> bool:
+        """Whether the schedule-derived anchors are present and for `season`.
+
+        Excludes the rookie draft date, which comes from Sleeper rather than a
+        schedule and lands on its own timetable.
+        """
+        anchors = self.nfl_anchors or {}
+        opener = anchors.get('nfl_regular_season_start')
+        if not opener or not str(opener).startswith(str(season)):
+            return False
+        # Preseason schedule may not have been published at last sync.
+        return bool(anchors.get(ANCHOR_TAXI_DEADLINE))
+
+    def _only_draft_date_missing(self, season: int) -> bool:
+        """Whether the sole gap is the rookie draft end date."""
+        return self._schedule_anchors_current(season) and not (
+            self.nfl_anchors or {}
+        ).get(ANCHOR_ROOKIE_DRAFT_END)
+
     def _anchors_need_sync(self, season: int) -> bool:
-        """Whether the stored anchors are missing, stale, or still incomplete.
+        """Whether a full anchor re-sync is warranted.
 
         Re-syncs while the rookie draft is unfinished, since that date is the
         one anchor that lands unpredictably - the draft moves to whatever
-        weekend owners can manage and then takes days to play out.
+        weekend owners can manage and then takes days to play out. That case is
+        handled by the cheaper `_only_draft_date_missing` path first.
         """
-        anchors = self.deadlines_config.get('nfl_anchors') or {}
-        if not anchors:
+        if not self.nfl_anchors:
             return True
-
-        opener = anchors.get('nfl_regular_season_start')
-        if not opener or not str(opener).startswith(str(season)):
+        if not self._schedule_anchors_current(season):
             return True
-
-        # Preseason schedule may not have been published at last sync.
-        if not anchors.get(ANCHOR_TAXI_DEADLINE):
-            return True
-
-        # Draft not finished last time we looked.
-        return not anchors.get(ANCHOR_ROOKIE_DRAFT_END)
+        return not self.nfl_anchors.get(ANCHOR_ROOKIE_DRAFT_END)
 
     async def _advance_state(self) -> dict[str, Any]:
         """Apply the state the observable signals imply, if it's a step forward.
@@ -269,7 +297,7 @@ class SchedulerCog(commands.Cog):
             return {'state_changed': None, 'state_suggested': None}
 
         season = await self._target_season()
-        anchors = self.deadlines_config.get('nfl_anchors') or {}
+        anchors = self.nfl_anchors or {}
         opener = _parse_iso(anchors.get('nfl_regular_season_start'))
         draft_end = _parse_iso(anchors.get(ANCHOR_ROOKIE_DRAFT_END))
 
@@ -912,12 +940,16 @@ class SchedulerCog(commands.Cog):
         return anchors
 
     def _store_anchors(self, anchors: dict[str, Optional[date]]) -> None:
-        """Write anchors to deadlines.yaml as ISO dates."""
-        self.deadlines_config['nfl_anchors'] = {
+        """Persist anchors as ISO dates in the bot-owned anchors file.
+
+        Deliberately not deadlines.yaml: that file is hand-maintained and
+        yaml.dump would strip its comments on every automatic sync.
+        """
+        self.nfl_anchors = {
             k: v.isoformat() if v else None
             for k, v in anchors.items()
         }
-        self._save_deadlines()
+        save_anchors(self.nfl_anchors)
 
     @app_commands.command(name="sync_nfl")
     @app_commands.describe(

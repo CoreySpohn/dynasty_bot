@@ -184,6 +184,12 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
 - **Rumor entity extraction is regex/substring based** (first name for
   owners, last name for players), not real NLP — fine for flavor, not
   bulletproof against short or common names.
+- **`deadlines.yaml` still loses its comments when a human edits a deadline.**
+  The anchor sync no longer touches that file (generated dates went to
+  `config/nfl_anchors.yaml`), but `/deadline`-style commands still round-trip it
+  through `yaml.dump`, which drops comments. Only on explicit human action now
+  rather than twice a day, and no data is lost - but fixing it properly needs a
+  comment-preserving YAML round-trip (`ruamel.yaml`).
 - **`config/league_state.yaml`'s `pre_draft` state is still manual.** The other
   three are now derived and applied by `SchedulerCog.upkeep_loop` (see
   `lib/league_state.py`), and NFL anchors re-sync themselves. `pre_draft` is
