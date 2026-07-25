@@ -85,8 +85,11 @@ a shared **derivation layer**, not a table.
   exhaustive enumeration rather than inferred from simulation
 - **Sacko Watch** — `/sacko`, last-place odds off the same simulation
 - **Taxi squad rule tracking** — `lib/taxi_rules.py` plus `/taxiaudit`,
-  `/taxieligible` and an admin `/taxibackfill`. Sleeper enforces none of the
-  league's taxi rules, so the bot holds them. Draft origin is derived from
+  `/taxieligible` and an admin `/taxibackfill`. Sleeper enforces *when*
+  (`taxi_deadline = 4`, the regular-season start) and *how long*
+  (`taxi_years = 3`), but not *who* — it cannot tell whether a stashed player
+  was one of your own rookie-draft picks that off-season, so the bot holds
+  that rule. Draft origin is derived from
   the draft endpoints (verified complete for all 46 current taxi players);
   activation history can't be, so `roster_snapshots` now records slots and
   `taxi_ledger` keeps observed activations. Two rules the commissioner's

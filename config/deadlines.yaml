@@ -185,12 +185,22 @@ deadlines:
 
 - id: taxi_decisions
   name: Taxi Squad Decisions
-  # Sleeper does NOT enforce the league's taxi rules - taxi_allow_vets is 1 on
-  # this league, so it will happily accept a free-agent stash that the rules
-  # forbid. Only players drafted in that off-season's rookie draft are legal,
-  # and the commissioner checks by hand (see /taxiaudit, /taxieligible).
-  # Promising enforcement here would invite an illegal move.
-  description: "🚕 Finalize your taxi squad by the day before NFL Week 1! Sleeper won't block an illegal stash - only rookies you drafted this off-season are eligible, and the commissioner checks by hand."
+  # What Sleeper's taxi settings on this league actually mean:
+  #   taxi_deadline = 4    -> the start of the regular season. Sleeper DOES
+  #                           lock taxi moves on that date.
+  #   taxi_years = 3       -> the 3-season window, matching TAXI_MAX_SEASONS.
+  #   taxi_allow_vets = 1  -> lets non-rookies sit on the taxi squad. This is
+  #                           required to get a 3-year window at all; without
+  #                           it players would have to be activated after
+  #                           their first year. It is NOT a loophole.
+  # So Sleeper enforces the *when* and the *how long*. What it cannot check is
+  # the *who*: only players you took in that off-season's own rookie draft may
+  # be added, no free-agent pickups. lib/taxi_rules.py holds that rule and
+  # /taxiaudit + /taxieligible compute it - but note nothing runs them on a
+  # schedule yet, so it still takes someone invoking the command.
+  # The league deadline is a day earlier than Sleeper's, so a move made on
+  # kickoff day after games began can't count.
+  description: "🚕 Finalize your taxi squad by the day before NFL Week 1! Sleeper locks taxi moves at the regular-season start but can't check eligibility - only players you took in this off-season's rookie draft may be stashed. Run /taxieligible to see yours; /taxiaudit flags violations."
   date: null
   relative_to: nfl_regular_season_start
   offset_days: -1

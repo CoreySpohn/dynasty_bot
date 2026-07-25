@@ -91,6 +91,27 @@ Posted in Discord, and the reading the bot implements (`lib/taxi_rules.py`):
 
 > So it seems like sleeper doesn't have a way to actually enforce the taxi squad rules so I'll be checking manually. As a reminder, the only players you can put on your taxi during an off-season are players you took in the rookie draft **that off-season** (so no free agent pick ups). Once they're taken off they can't be put back, and once they are in **year 4** they must be taken off.
 
+### What Sleeper enforces, and what it can't
+
+The quote above predates the current settings, so to be precise about the
+division of labour — this league's Sleeper settings are:
+
+| Setting | Value | Effect |
+|---------|-------|--------|
+| `taxi_deadline` | 4 | The start of the regular season. Sleeper **does** lock taxi moves on that date. |
+| `taxi_years` | 3 | The three-season window, matching `TAXI_MAX_SEASONS`. |
+| `taxi_allow_vets` | 1 | Lets non-rookies sit on the taxi squad. Required to get a three-year window at all — without it a player would have to be activated after his first year. Not a loophole. |
+
+So Sleeper handles the **when** and the **how long**. What it cannot check is
+the **who**: that a stashed player was one of that owner's own picks from that
+off-season's rookie draft, with no free-agent pickups. The bot holds that rule
+in `lib/taxi_rules.py`, and `/taxieligible` and `/taxiaudit` compute it — so
+it is no longer a manual eyeball over rosters. It does still need someone to
+run the command: nothing audits eligibility on a schedule today, and the only
+automatic taxi loop is the 24-hour raid reminder. The league's own deadline
+sits one day before Sleeper's, so a move made on kickoff day after games
+began can't count.
+
 ### Why the deadline moved to the start of the regular season
 
 For the record, since the bot's implementation history reflects it. Under the old preseason-relative deadline the rookie draft had **finished after the deadline** in two of the last three years:

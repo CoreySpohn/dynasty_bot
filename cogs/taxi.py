@@ -535,7 +535,9 @@ class TaxiRaiding(commands.Cog):
             await interaction.followup.send(f"❌ Error fetching raid history: {e}")
     
     # =====================================================================
-    # League taxi rules (Sleeper does not enforce these)
+    # League taxi rules Sleeper can't check. It enforces the deadline and the
+    # 3-season window itself; what it can't tell is whether a stashed player
+    # was one of that owner's own rookie-draft picks that off-season.
     # =====================================================================
 
     async def _draft_index(self) -> dict:

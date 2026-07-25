@@ -224,3 +224,7 @@ config/members_generated.yaml
 
 # Separate repository
 fantasy_site/
+
+# Agent worktrees live here and are their own checkouts - a stray `git add -A`
+# from the main checkout otherwise commits one as an embedded git repo.
+.claude/
