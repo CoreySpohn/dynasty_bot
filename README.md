@@ -79,8 +79,14 @@ uv run python main.py
 | Command | Description |
 |---------|-------------|
 | `/standings` | League standings with points |
+| `/rankings` | Power rankings image (max potential points, win %, avg points, dynasty value) |
+| `/matchups [week]` | Matchups for a week |
 | `/roster <team>` | View a team's roster |
 | `/schedule [week]` | View matchups |
+| `/seasonreport` | End-of-season summary |
+| `/payouts` | Payout breakdown |
+| `/draftorder` | Current projected draft order |
+| `/primetime` | Primetime lineup lock status |
 
 ---
 
@@ -88,17 +94,23 @@ uv run python main.py
 
 Dynasty trade values are synced daily from KeepTradeCut and stored historically so trends can be tracked over time. Team dynasty value also factors into `/rankings` (see Analytics above).
 
+The same daily job also snapshots **roster composition**, because Sleeper only ever serves *current* rosters — who owned whom on a past date is unrecoverable once the day passes. Those two dated tables together (`ktc_values` = what a player was worth on a date, `roster_snapshots` = who owned them) are what make `/valuehistory` and `/tradegrades` possible.
+
 | Command | Description |
 |---------|-------------|
 | `/tradevalue <player>` | Look up a player's current 1QB/Superflex value, rank, and 7-day trend |
 | `/teamvalues` | Rank owners by total dynasty roster value |
-| `/valuemovers` | Winners & losers: biggest team value swings over the last 7 days |
-| `/tradecalc <side_a> <side_b>` | Compare KTC value of two sides of a proposed trade (players only, comma-separated) |
+| `/valuemovers` | Winners & losers: biggest team value swings over the last 7 days (market movement on **currently owned** players only) |
+| `/valuehistory [days]` | Team value now vs N days ago, priced against the roster each team actually had then — so **trades count** |
+| `/tradecalc <side_a> <side_b>` | Compare KTC value of two sides of a proposed trade — players *and* picks, comma-separated |
+| `/tradegrades [week]` | Grade a week's completed trades using values from the day they happened, plus how they've aged |
+
+**Picks in `/tradecalc`:** KTC prices rookie picks by tier (`2027 Early 1st`). Loose phrasings resolve automatically — `2027 1st`, `27 2nd round pick`, `2028 late 3rd` — and a pick with no stated tier is priced as **Mid**. Only rounds 1–4 are published by KTC.
 
 **Admin Commands:**
 | Command | Description |
 |---------|-------------|
-| `/synctradevalues` | Manually refresh trade values from KeepTradeCut |
+| `/synctradevalues` | Manually refresh trade values from KeepTradeCut and snapshot rosters |
 
 ---
 
@@ -164,8 +176,12 @@ SLEEPER_LEAGUE_ID=your_league_id
 # For Kohl's Cash betting
 THE_ODDS_API_KEY=your_odds_api_key
 
-# For AI rumors
+# For AI rumors - any subset works. The bot rotates between every backend
+# that has a key (different models write in noticeably different voices) and
+# fails over to another one if the first is rate limited or down.
 GEMINI_API_KEY=your_gemini_key
+ANTHROPIC_API_KEY=your_anthropic_key
+OPENAI_API_KEY=your_openai_key
 
 # Channel IDs
 RUMORS_CHANNEL_ID=channel_for_rumors
@@ -189,6 +205,13 @@ KOHLS_FORUM_CHANNEL_ID=forum_for_game_threads
 - Table-based rumor generation with REAL roster players
 - Submit via DM or slash command
 - Separate NFL news channel
+- Rotates across Gemini / Claude / OpenAI for stylistic variety, with automatic failover between backends
+
+### 💰 Dynasty Value Tracking
+- Daily KeepTradeCut sync, stored as dated snapshots (KTC has no historical API, so this is the only record)
+- Daily roster composition snapshots, since Sleeper only serves current rosters
+- Team value over time *including* trades, not just market movement
+- Trade grading at trade-date values, plus how each side has aged
 
 ### 🚕 Taxi Raiding
 - Full draft origin lookup across seasons
@@ -215,30 +238,53 @@ KOHLS_FORUM_CHANNEL_ID=forum_for_game_threads
 # Run with hot reload
 uv run python main.py
 
-# Run specific command tests
-uv run python -c "from cogs.kohls import KohlsCash"
+# Run the test suite (also runs in CI on every push and PR)
+uv run pytest
 ```
+
+### What gets stored vs. computed live
+
+The rule for this codebase: **persist only what upstream won't give back.**
+
+| Source | Retains history? | So we... |
+|--------|------------------|----------|
+| Sleeper (matchups, results, transactions, brackets) | Yes, forever, chained via `previous_league_id` | compute live — don't duplicate it |
+| KeepTradeCut | No API, no history | snapshot daily (`ktc_values`) |
+| Roster composition | Sleeper serves *current* only | snapshot daily (`roster_snapshots`) |
+| Bot-generated (raids, Kohl's ledger, nickname tags) | Nothing else knows it | persist |
+
+Storing derived Sleeper data means keeping a second source of truth in sync for no gain, and it can always be recomputed. Storing KTC values and roster composition is the opposite: miss a day and it's gone permanently.
 
 ### Project Structure
 ```
 dynasty_bot/
-├── main.py              # Bot entrypoint
-├── config.py            # Environment config
-├── database.py          # SQLite schema
-├── cogs/                # Discord command modules
-│   ├── kohls.py         # Kohl's Cash betting
-│   ├── rumors.py        # AI rumors
-│   ├── taxi.py          # Taxi raiding
-│   ├── responses.py     # Random responses
-│   ├── scheduler.py     # Reminders
+├── main.py                   # Bot entrypoint
+├── config.py                 # Environment config
+├── database.py               # SQLite schema
+├── cogs/                     # Discord command modules
+│   ├── kohls.py              # Kohl's Cash betting
+│   ├── rumors.py             # AI rumors
+│   ├── taxi.py               # Taxi raiding
+│   ├── trade_values.py       # KTC values, team value history, trade grading
+│   ├── analytics.py          # Power rankings, standings, matchups
+│   ├── responses.py          # Random responses
+│   ├── scheduler.py          # Reminders
 │   └── ...
-├── clients/             # External API clients
-│   ├── sleeper.py       # Sleeper API
-│   └── odds.py          # The Odds API
-├── lib/                 # Shared utilities
-│   ├── members.py       # Member registry
-│   └── ai_client.py     # Gemini AI
-└── config/              # YAML configurations
+├── clients/                  # External API clients
+│   ├── sleeper.py            # Sleeper API
+│   ├── keeptradecut.py       # KeepTradeCut dynasty values
+│   ├── nfl_schedule.py       # NFL schedule (nflreadpy)
+│   └── odds.py               # The Odds API
+├── lib/                      # Shared utilities
+│   ├── members.py            # Member registry
+│   ├── roster_history.py     # Daily roster composition snapshots
+│   ├── standings.py          # Standings computation
+│   ├── plotting.py           # Table/chart rendering
+│   ├── nicknames.py          # Nickname tagging
+│   ├── ai_client.py          # Gemini
+│   ├── claude_client.py      # Claude
+│   └── openai_client.py      # OpenAI
+└── config/                   # YAML configurations
 ```
 
 ---

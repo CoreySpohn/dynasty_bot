@@ -41,6 +41,18 @@ logger = logging.getLogger("dynasty_bot.rumors")
 # Load reporters config
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "reporters.yaml"
 
+# Defaults used only after every AI backend has failed. These used to live
+# inside each backend, which meant a provider outage returned plausible-
+# looking text instead of signalling failure - so there was nothing to
+# trigger failover on, and the placeholder got posted as if it were a real
+# rewrite. The backends now return None and the decision lives here.
+CUSTOM_REPORTER_DEFAULTS = ("Custom Reporter", "🎭")
+
+
+def fallback_rumor_text(reporter_name: str, rumor: str) -> str:
+    """Last-resort rumor text for when no AI backend could rewrite it."""
+    return f"*{reporter_name} hears whispers*: {rumor}"
+
 # Occasional delivery notes to break up the "press release" cadence, since
 # every rumor otherwise reads like a dramatic 2-4 sentence news report.
 STYLE_NOTES = [
@@ -177,14 +189,17 @@ class ReporterSelect(discord.ui.Select):
 
         # Rewrite the rumor
         try:
-            rewritten = await self.cog._get_ai_client().rewrite_as_reporter(
+            rewritten = await self.cog._ai_call(
+                "rewrite_as_reporter",
                 rumor=self.rumor_text,
                 reporter_name=reporter_name,
                 reporter_style=reporter_style,
                 team_names=team_names,
                 member_context=member_context,
             )
-            
+            if rewritten is None:
+                rewritten = fallback_rumor_text(reporter_name, self.rumor_text)
+
             success = await self.cog._post_rumor(
                 content=rewritten,
                 reporter_name=reporter_name,
@@ -814,6 +829,46 @@ class LeagueRumors(commands.Cog):
         """
         return random.choice(self.ai_clients)
 
+    @staticmethod
+    def _client_label(client) -> str:
+        """Human-readable backend name for failover logging."""
+        return f"{type(client).__name__}({getattr(client, 'model_name', '?')})"
+
+    async def _ai_call(self, method_name: str, **kwargs):
+        """Invoke `method_name` on AI backends until one produces a result.
+
+        The first backend tried is _get_ai_client()'s random pick, so model
+        choice still varies per generation. The rest are tried in random
+        order purely as failover: one provider being rate limited or down
+        used to cost us the whole rumor, since the 48-hour auto-post loop
+        gets one attempt per cycle.
+
+        Returns:
+            The first truthy result, or None if every backend failed.
+        """
+        primary = self._get_ai_client()
+        others = [c for c in self.ai_clients if c is not primary]
+        random.shuffle(others)
+
+        for client in [primary, *others]:
+            try:
+                result = await getattr(client, method_name)(**kwargs)
+            except Exception as e:
+                logger.warning(
+                    f"AI backend {self._client_label(client)} raised on "
+                    f"{method_name}: {e}; trying another backend"
+                )
+                continue
+            if result:
+                return result
+            logger.warning(
+                f"AI backend {self._client_label(client)} returned nothing for "
+                f"{method_name}; trying another backend"
+            )
+
+        logger.error(f"All AI backends failed on {method_name}")
+        return None
+
     async def cog_load(self) -> None:
         """Called when the cog is loaded."""
         logger.info("League Rumors cog loaded")
@@ -952,8 +1007,12 @@ class LeagueRumors(commands.Cog):
         if reporter == "custom":
             if not custom_personality:
                 return None
-            name, emoji, style = await self._get_ai_client().parse_custom_reporter(
-                custom_personality
+            parsed = await self._ai_call(
+                "parse_custom_reporter", custom_prompt=custom_personality
+            )
+            name, emoji, style = parsed or (
+                *CUSTOM_REPORTER_DEFAULTS,
+                custom_personality,
             )
             return (name, style, emoji)
 
@@ -1110,7 +1169,8 @@ class LeagueRumors(commands.Cog):
         logger.info(f"Generating random rumor about: {topic}")
         
         try:
-            rumor = await self._get_ai_client().generate_random_rumor(
+            rumor = await self._ai_call(
+                "generate_random_rumor",
                 topic=topic,
                 team_names=team_names,
                 reporter_name=reporter_name,
@@ -1217,7 +1277,8 @@ class LeagueRumors(commands.Cog):
         target_channel = self.nfl_channel_id if context == "nfl" else self.rumors_channel_id
         
         try:
-            rewritten = await self._get_ai_client().rewrite_as_reporter(
+            rewritten = await self._ai_call(
+                "rewrite_as_reporter",
                 rumor=rumor,
                 reporter_name=reporter_name,
                 reporter_style=reporter_style,
@@ -1225,7 +1286,9 @@ class LeagueRumors(commands.Cog):
                 member_context=member_context,
                 is_nfl_news=(context == "nfl"),
             )
-            
+            if rewritten is None:
+                rewritten = fallback_rumor_text(reporter_name, rumor)
+
             success = await self._post_rumor(
                 content=rewritten,
                 reporter_name=reporter_name,
@@ -1306,7 +1369,8 @@ class LeagueRumors(commands.Cog):
 
         try:
             # Have AI expand on the generated seed
-            rumor = await self._get_ai_client().generate_random_rumor(
+            rumor = await self._ai_call(
+                "generate_random_rumor",
                 topic=rumor_seed,  # Pass the filled template as the topic
                 team_names=await self._get_team_names(),
                 reporter_name=reporter_name,

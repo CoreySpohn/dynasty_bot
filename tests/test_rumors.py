@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 
 import cogs.trade_values as trade_values_module
-from cogs.rumors import STYLE_NOTES, LeagueRumors
+from cogs.rumors import STYLE_NOTES, LeagueRumors, fallback_rumor_text
 from database import Database
 
 
@@ -90,6 +90,88 @@ class TestAIClientRotation:
             assert len(cog.ai_clients) == 1
         finally:
             cog.random_rumor_task.cancel()
+
+
+class TestAIBackendFailover:
+    """A single backend failing must not cost us the whole rumor.
+
+    Backends previously swallowed their own API errors and returned
+    plausible placeholder text ("*X hears whispers*: ..."), so an outage
+    was indistinguishable from success and nothing ever failed over. They
+    now return None and _ai_call tries the next backend.
+    """
+
+    @staticmethod
+    def _stub(result=None, raises=None):
+        client = MagicMock()
+        client.model_name = "stub"
+        client.generate_random_rumor = AsyncMock(
+            side_effect=raises, return_value=result
+        )
+        return client
+
+    async def test_falls_back_to_another_backend_when_one_raises(self, rumors_cog):
+        broken = self._stub(raises=RuntimeError("429 rate limited"))
+        working = self._stub(result="a real rumor")
+        rumors_cog.ai_clients = [broken, working]
+        rumors_cog._get_ai_client = MagicMock(return_value=broken)
+
+        result = await rumors_cog._ai_call("generate_random_rumor", topic="t")
+
+        assert result == "a real rumor"
+        working.generate_random_rumor.assert_awaited_once()
+
+    async def test_falls_back_when_one_returns_nothing(self, rumors_cog):
+        empty = self._stub(result=None)
+        working = self._stub(result="a real rumor")
+        rumors_cog.ai_clients = [empty, working]
+        rumors_cog._get_ai_client = MagicMock(return_value=empty)
+
+        assert await rumors_cog._ai_call("generate_random_rumor") == "a real rumor"
+
+    async def test_returns_none_only_when_every_backend_fails(self, rumors_cog):
+        clients = [self._stub(raises=RuntimeError("down")) for _ in range(3)]
+        rumors_cog.ai_clients = clients
+        rumors_cog._get_ai_client = MagicMock(return_value=clients[0])
+
+        assert await rumors_cog._ai_call("generate_random_rumor") is None
+        for client in clients:
+            client.generate_random_rumor.assert_awaited_once()
+
+    async def test_tries_the_random_primary_pick_first(self, rumors_cog):
+        primary = self._stub(result="from primary")
+        other = self._stub(result="from other")
+        rumors_cog.ai_clients = [other, primary]
+        rumors_cog._get_ai_client = MagicMock(return_value=primary)
+
+        assert await rumors_cog._ai_call("generate_random_rumor") == "from primary"
+        other.generate_random_rumor.assert_not_awaited()
+
+    async def test_does_not_retry_the_primary_backend_twice(self, rumors_cog):
+        primary = self._stub(raises=RuntimeError("down"))
+        rumors_cog.ai_clients = [primary]
+        rumors_cog._get_ai_client = MagicMock(return_value=primary)
+
+        assert await rumors_cog._ai_call("generate_random_rumor") is None
+        primary.generate_random_rumor.assert_awaited_once()
+
+    async def test_custom_reporter_falls_back_to_defaults_when_all_fail(
+        self, rumors_cog
+    ):
+        rumors_cog._ai_call = AsyncMock(return_value=None)
+
+        resolved = await rumors_cog._resolve_reporter("custom", "a drunk pirate")
+
+        # (name, style, emoji) - style falls back to the raw user description.
+        assert resolved == ("Custom Reporter", "a drunk pirate", "🎭")
+
+
+class TestFallbackRumorText:
+    def test_includes_reporter_and_original_rumor(self):
+        text = fallback_rumor_text("Stephen A.", "Corey is trading Chase")
+
+        assert "Stephen A." in text
+        assert "Corey is trading Chase" in text
 
 
 class TestGenerateFromTables:

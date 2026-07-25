@@ -1,103 +1,168 @@
 # NathanPeterman Roadmap 🏈
 
-Future feature ideas for the Dynasty Fantasy Football Discord Bot.
+Feature ideas for the Dynasty Fantasy Football Discord Bot.
 
 ---
 
-## 🎰 Fun & Games
+## Guiding principle: persist only what upstream won't give back
 
-### Rework the auto-rumor generation
-It's currently commented out and was posting very generic rumors that didn't have anything to do with the league. It should be reworked to be more engaging and relevant to the league.
+Worth stating up front, because it decides how most features below get built.
 
-### Custom Reporters + prompts
-The rumor feature doesn't currently allow for very customized prompts but it should allow the user to specify more details like a custom personality, key phrases that *must* be included, and whatnot.
+Sleeper keeps league history **forever** — matchups, per-team scores,
+`starters`, `players_points`, transactions, playoff brackets — and prior
+seasons chain backwards through `previous_league_id`. Anything derivable from
+that should be **computed live**, not copied into our own tables. Copying it
+buys a second source of truth to keep in sync, a backfill to get right, and
+staleness bugs, in exchange for nothing. `power_rankings` is the cautionary
+tale: it's a stored derivation of Sleeper data and it has sat empty.
 
-### Trash Talk Generator
-`/trashtalk @opponent` - AI-powered smack talk for your weekly matchup.
+The opposite is true for KeepTradeCut (no API, no history) and roster
+composition (Sleeper serves *current* rosters only). Miss a day there and
+it's gone permanently, which is why both are snapshotted daily.
 
-### Shame Wall
-Tracks and auto-posts the worst starts/sits of the week.
-- "DaFuzz started a player on BYE! 🤦"
-- "Rob Jr. left 40 points on the bench!"
+So when a feature below wants "history," ask which kind it needs. Most want
+a shared **derivation layer**, not a table.
 
-### Weekly Predictions
-Bot predicts each matchup winner with confidence %, tracks accuracy over the season.
+---
 
-### Fantasy Roulette
-Random start/sit advice when you can't decide (with a disclaimer!).
+## ✅ Shipped
 
+- **Auto-rumor generation** — reworked and re-enabled: grounded in real
+  events, table-driven seeds, weighted context modules
+- **Custom reporters + prompts** — `/rumor` and `/randomrumor` take a custom
+  personality, parsed into name/emoji/style
+- **AI backend rotation + failover** — rotates Gemini/Claude/OpenAI for
+  stylistic variety and fails over when one is rate limited or down.
+  Backends used to swallow their own errors and return placeholder text
+  (`*X hears whispers*: ...`), so an outage was indistinguishable from a
+  successful rewrite and nothing ever failed over
+- **Dynasty value tracking** — daily KTC sync into dated `ktc_values`
+  snapshots, with `/tradevalue`, `/teamvalues`, `/valuemovers`
+- **Team dynasty value in power rankings** — 15% of the `/rankings` Power
+  Level formula
+- **Rumor flavor from value trends** — one weighted context module per
+  rumor, chained onto the owner/player the rumor is actually about
+- **Picks in `/tradecalc`** — KTC's `RDP` rows were already being synced;
+  loose phrasings (`2027 1st`, `27 2nd round pick`) now resolve onto them,
+  defaulting to the Mid tier
+- **Roster composition snapshots** — `roster_snapshots`, written daily
+  alongside the KTC sync, skipping unchanged days
+- **Team value over time including churn** — `/valuehistory` prices each
+  team against the roster it *actually had* N days ago, so trades count.
+  (`/valuemovers` remains the pure-market-movement view)
+- **Trade grading** — `/tradegrades` prices both sides of a completed trade
+  at trade-date values, plus how each side has aged since
+- **CI** — `uv run pytest` on every push and PR
 
 ---
 
 ## 📊 Advanced Analytics
 
-### Luck Index
-Calculates how lucky/unlucky each team has been based on:
-- Points Against vs league average
-- Close wins/losses record
-- Optimal lineup vs actual performance
+### Weekly results derivation layer
+The prerequisite for most of the section below, and it's a **module, not a
+table**. `get_matchups(league_id, week)` already returns `starters`,
+`players`, and `players_points` per team — everything needed for optimal
+lineup, bench points, and margins. `cogs/analytics.py` reads
+`players_points` for power rankings and throws the intermediate results
+away; `calculate_optimal_lineup` is right there too.
 
-### "What If" Machine
-`/whatif @player trade` - Simulates how your season would've gone with different roster decisions.
+Build `lib/results.py` returning computed per-team weekly results (score,
+opponent, W/L, optimal points, bench points), chaining `previous_league_id`
+for prior seasons. Have `/rankings` use it instead of its own loop. If
+latency bites, add an in-process TTL cache — finalized weeks are immutable,
+so caching is trivially safe.
+
+### Luck Index
+Points Against vs league average, close wins/losses, optimal lineup vs
+actual. All computable from the results layer.
 
 ### Playoff Scenarios
-Auto-calculates playoff clinching/elimination scenarios each week.
+Auto-calculated clinching/elimination scenarios each week.
 - "Noah needs to win AND have Fuzzy lose to clinch playoffs"
 
 ### Historical Matchups
-Track all-time head-to-head records.
+All-time head-to-head records — a `GROUP BY` over the results layer once it
+chains prior seasons.
 - "Corey is 12-5 all-time vs Fuzzy"
+
+### "What If" Machine
+`/whatif @player trade` — simulates how your season would've gone with
+different roster decisions.
 
 ---
 
 ## 🏆 Awards & Recognition
 
 ### Weekly Awards
-Auto-posts after each week:
+Auto-posts after each week. Cheap once the results layer exists; needs one
+small table for "already posted this award" idempotency (follow the existing
+`reminder_history` pattern rather than inventing a new one).
 - 👑 **Highest Scorer**
 - 😱 **Biggest Upset**
 - 📈 **Best Bench** (most points left on bench)
 - 💔 **Worst Beat** (highest-scoring loser)
 
+### Shame Wall
+Worst starts/sits of the week — optimal-lineup gap and BYE/injured starters,
+straight off the results layer.
+- "DaFuzz started a player on BYE! 🤦"
+- "Rob Jr. left 40 points on the bench!"
+
 ### Sacko Watch
 Dramatic countdown tracking who's in danger of last place.
-- Custom shame messages
-- "Sacko Alert: Rob Sr. is 1 loss away from the toilet bowl!"
 
-### Dynasty Power Rankings
-AI-generated roast/praise of each team's dynasty outlook.
-- Considers age of players, draft capital, trade value
+### Championship Ring Counter
+Historical champions with emoji rings — derivable from playoff brackets
+across the `previous_league_id` chain.
+- 🏆🏆🏆 Fuzzy (3x Champion)
+
+---
+
+## 🎰 Fun & Games
+
+### Trash Talk Generator
+`/trashtalk @opponent` — AI-powered smack talk for your weekly matchup. The
+reporter-persona and failover machinery already exists, so this is mostly
+prompt work. Good quick win.
+
+### Weekly Predictions
+Bot predicts each matchup winner with confidence %, tracks accuracy over the
+season. **Needs a real table** — the bot's own predictions exist nowhere
+else, so unlike the rest of this section they can't be recomputed.
+
+### Trade Regret Tracker
+Revisit old trades after N weeks and declare a winner. `/tradegrades`
+already does then-vs-now, so this is largely a scheduled wrapper around it.
+Blocked in practice by history depth, not code: KTC snapshots only start
+2026-07-22 and can't be backfilled, so meaningful verdicts need months of
+accumulation.
+
+### Fantasy Roulette
+Random start/sit advice when you can't decide (with a disclaimer!).
 
 ---
 
 ## 🎭 Social & Engagement
 
 ### Player Birthday Alerts
-"🎂 Happy Birthday to YOUR player, Patrick Mahomes!"
+"🎂 Happy Birthday to YOUR player, Patrick Mahomes!" — Sleeper's player data
+carries birthdates.
 
 ### Injury Roasts
 When your star gets hurt, bot sends condolences in a reporter's voice.
-- "BREAKING: Sources say Corey is 'devastated' after losing Ja'Marr Chase to injury"
-
-### Championship Ring Counter
-Tracks historical champions with emoji rings.
-- 🏆🏆🏆 Fuzzy (3x Champion)
-- 🏆 Corey (2019)
-
-### Trade Regret Tracker
-Revisits old trades after X weeks and declares a winner based on actual performance.
+- "BREAKING: Sources say Corey is 'devastated' after losing Ja'Marr Chase"
 
 ---
 
 ## 🎲 Mini-Games
 
 ### Survivor Pool
-Weekly pick'em within the league - pick one NFL team to win, can't reuse teams.
+Weekly pick'em — pick one NFL team to win, can't reuse teams.
 
-### Prop Bets
-Create polls/bets within the league:
+### League Prop Bets
+Polls/bets on league events, distinct from the NFL-based props in Kohl's
+Cash.
 - "Will Corey trade his 1st round pick before the deadline?"
-- "Over/Under: Noah's team scores 120 this week"
 
 ### Caption Contest
 Bot posts a meme, league votes on best caption.
@@ -107,55 +172,64 @@ Bot posts a meme, league votes on best caption.
 ## 🔧 Utility Features
 
 ### Proper tagging on Discord
-Make sure bot alerts like taxi squad raiding or lineup alerts are tagging the proper Discord users who are relevant, and that when necessary the bot will follow up if a deadline is approaching or has been missed.
+Make sure alerts (taxi raids, lineup alerts) tag the right users, and that
+the bot follows up when a deadline is approaching or missed. Taxi raiding
+does this; the rest is uneven.
 
 ### Waiver Wire Alerts
 Notify when specific players are dropped to waivers.
 
-### Trade Calculator Integration
-KeepTradeCut dynasty values are now synced daily and tracked historically
-(`ktc_values` table), with `/tradevalue`, `/teamvalues`, `/valuemovers`
-(weekly value winners/losers), and `/tradecalc` (sums KTC value on each
-side of a proposed trade) all live. Team dynasty value also now feeds
-into the `/rankings` Power Level formula (15% weight). Still open:
-`/tradecalc` only accepts players by name, not draft picks; and a second
-source (FantasyCalc) for cross-checking values.
-
-### Rumor Flavor from Team Value Trends - DONE
-`cogs/rumors.py` now rolls a single weighted "context module" per rumor
-(`CONTEXT_MODULES`) - full roster, one owner's roster, a player's KTC
-value, a team's total dynasty value, a 7-day value trend, or nothing at
-all - instead of always injecting the full roster dump every time. Several
-modules chain onto the specific owner/player the rumor's topic is actually
-about (`_build_rumor_seed`'s `subject`, or `_extract_subject_from_text` for
-real user-submitted rumors like "Corey wants to draft Mendoza"), so the
-extra color reads as attached to the rumor rather than random noise. Open
-follow-up: entity extraction is regex/substring based (first name for
-owners, last name for players), not real NLP - good enough for flavor, not
-bulletproof against short/common names.
-
 ### Draft Recap
-Auto-generate draft grades and hot takes after rookie drafts.
+Auto-generate draft grades and hot takes after rookie drafts. Season-bound —
+misses its window if not ready before the rookie draft.
 
 ### Weekly Newsletter
-Auto-generated league newsletter with recaps, standings, and drama.
+Auto-generated league newsletter with recaps, standings, and drama. Best
+built last, on top of the results layer and Weekly Awards.
 
+### Second value source (FantasyCalc)
+Cross-check KTC values. Would also give pick tiers a sanity check.
+
+---
+
+## Open follow-ups on shipped work
+
+- **Pick tiers are assumed, not known.** Sleeper records a traded pick as
+  season + round; KTC prices Early/Mid/Late separately, and which one a
+  future pick becomes isn't knowable until that season's standings exist.
+  Both `/tradecalc` and `/tradegrades` price untiered picks as **Mid**.
+  Refine from standings once a season is underway.
+- **Owner-qualified picks don't resolve.** "Corey's 2027 1st" deliberately
+  falls through rather than being mispriced, since pricing it needs to know
+  whose pick it is.
+- **Rumor entity extraction is regex/substring based** (first name for
+  owners, last name for players), not real NLP — fine for flavor, not
+  bulletproof against short or common names.
+- **`config/league_state.yaml` drifts.** It's manual, and a stale
+  `current_state` silently gates the wrong set of deadline reminders.
 
 ---
 
 ## Priority Guide
 
-| Priority | Feature | Complexity |
-|----------|---------|------------|
-| 🔴 High | Weekly Awards | Medium |
-| 🔴 High | Luck Index | Medium |
-| 🟡 Medium | Trash Talk Generator | Low |
-| 🟡 Medium | Historical Matchups | Low |
-| 🟡 Medium | Playoff Scenarios | Medium |
-| 🟢 Low | Championship Rings | Low |
-| 🟢 Low | Survivor Pool | High |
-| 🟢 Low | Trade Regret Tracker | Medium |
+Timing matters more than complexity here: anything in-season has to land
+before NFL Week 1 or it sits idle for a year.
+
+| Priority | Feature | Complexity | Deadline |
+|----------|---------|------------|----------|
+| 🔴 High | Weekly results derivation layer | Medium | Before Week 1 |
+| 🔴 High | Weekly Awards | Low (after layer) | Before Week 1 |
+| 🔴 High | Shame Wall | Low (after layer) | Before Week 1 |
+| 🔴 High | Luck Index | Low (after layer) | Before Week 1 |
+| 🟡 Medium | Trash Talk Generator | Low | Any time |
+| 🟡 Medium | Historical Matchups | Low (after layer) | Any time |
+| 🟡 Medium | Playoff Scenarios | Medium | Before playoffs |
+| 🟡 Medium | Weekly Predictions | Medium | Before Week 1 |
+| 🟢 Low | Championship Rings | Low | Any time |
+| 🟢 Low | Trade Regret Tracker | Low (needs history depth) | Blocked ~months |
+| 🟢 Low | Weekly Newsletter | Medium | After awards |
+| 🟢 Low | Survivor Pool | High | Before Week 1 |
 
 ---
 
-*Last updated: January 2026*
+*Last updated: July 2026*

@@ -4,11 +4,14 @@ Provides async SQLite database connection management and schema setup
 using aiosqlite for non-blocking database operations.
 """
 
+import logging
 import aiosqlite
 from typing import Optional
 from contextlib import asynccontextmanager
 
 from config import DATABASE_PATH
+
+logger = logging.getLogger("dynasty_bot.database")
 
 
 class Database:
@@ -311,6 +314,34 @@ class Database:
         await self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_ktc_values_player_name
             ON ktc_values(player_name, recorded_date)
+        """)
+
+        # Daily roster composition snapshots.
+        #
+        # Sleeper only serves *current* rosters, so past composition is
+        # unrecoverable once the day passes - which is why this is stored
+        # rather than derived. Paired with ktc_values (what a player was
+        # worth on a date) it's what makes team and trade value history
+        # possible. Unchanged days are skipped, so reads are "newest
+        # snapshot on or before date D". See lib/roster_history.py.
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS roster_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_date TEXT NOT NULL,
+                roster_id INTEGER NOT NULL,
+                owner_id TEXT,
+                player_id TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(recorded_date, roster_id, player_id)
+            )
+        """)
+        await self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_roster_snapshots_date
+            ON roster_snapshots(recorded_date)
+        """)
+        await self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_roster_snapshots_player
+            ON roster_snapshots(player_id, recorded_date)
         """)
 
         # Bot-applied nickname tags (standings rank, draft slot, on-the-clock).

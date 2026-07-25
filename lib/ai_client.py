@@ -42,9 +42,9 @@ class GeminiClient:
         team_names: Optional[list[str]] = None,
         member_context: Optional[str] = None,
         is_nfl_news: bool = False,
-    ) -> str:
+    ) -> Optional[str]:
         """Rewrite a user-submitted rumor in a reporter's style.
-        
+
         Args:
             rumor: The original rumor text from the user.
             reporter_name: Name of the reporter persona.
@@ -52,13 +52,15 @@ class GeminiClient:
             team_names: Optional list of team names in the league.
             member_context: Optional formatted string with member info.
             is_nfl_news: If True, this is NFL news, not fantasy league specific.
-            
+
         Returns:
-            The rewritten rumor in the reporter's style.
+            The rewritten rumor in the reporter's style, or None if this
+            backend could not produce one. Callers are expected to try
+            another backend rather than posting a placeholder.
         """
         if not self.client:
             logger.error("Gemini client not initialized")
-            return f"*{reporter_name} hears a rumor*: {rumor}"
+            return None
         
         # Build different prompts for NFL vs League rumors
         if is_nfl_news:
@@ -115,12 +117,11 @@ Write the report AS {reporter_name} (stay in character!):"""
                 ),
             )
             
-            text = response.text.strip() if response.text else ""
-            return text
-            
+            return (response.text or "").strip() or None
+
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
-            return f"*{reporter_name} hears whispers*: {rumor}"
+            return None
     
     async def generate_random_rumor(
         self,
@@ -129,7 +130,7 @@ Write the report AS {reporter_name} (stay in character!):"""
         reporter_name: str,
         reporter_style: str,
         member_context: Optional[str] = None,
-    ) -> str:
+    ) -> Optional[str]:
         """Generate a completely made-up rumor for entertainment.
         
         Args:
@@ -180,24 +181,26 @@ Write the rumor as {reporter_name}:"""
                 ),
             )
             
-            return response.text.strip()
-            
+            return (response.text or "").strip() or None
+
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             return None
     
-    async def parse_custom_reporter(self, custom_prompt: str) -> tuple[str, str, str]:
+    async def parse_custom_reporter(
+        self, custom_prompt: str
+    ) -> Optional[tuple[str, str, str]]:
         """Parse a custom reporter prompt to extract name, emoji, and style.
-        
+
         Args:
             custom_prompt: User's description of the custom reporter personality.
-            
+
         Returns:
-            Tuple of (name, emoji, style_instructions)
+            Tuple of (name, emoji, style_instructions), or None if this
+            backend could not parse it, so the caller can try another.
         """
         if not self.client:
-            # Fallback if no API
-            return ("Custom Reporter", "🎭", custom_prompt)
+            return None
         
         prompt = f"""Analyze this custom reporter personality description and extract:
 1. A short reporter NAME (2-3 words max, like "Drunk Pirate" or "Conspiracy Theorist")
@@ -241,7 +244,7 @@ STYLE: [detailed instructions for how this reporter talks, their catchphrases, m
             
         except Exception as e:
             logger.error(f"Gemini API error parsing custom reporter: {e}")
-            return ("Custom Reporter", "🎭", custom_prompt)
+            return None
 
 
 # Singleton instance - will be created when actually used
