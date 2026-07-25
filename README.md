@@ -110,6 +110,25 @@ Both default to the **last completed week** — the in-progress week has partial
 
 ---
 
+### 🔮 Projections
+
+One model (`lib/projections.py`) powers all four commands, so they can't disagree with each other. Each team's weekly score is treated as normal, with mean and spread **shrunk toward the league average** by a weight that decays as real games accumulate — dynasty roster value supplies the prior, since it's the only signal available in week 1. A matchup is then the difference of two normals; season odds come from simulating the remaining schedule 10,000 times.
+
+| Command | Description |
+|---------|-------------|
+| `/predictions [week]` | Matchup predictions with confidence %, graded once the week finishes |
+| `/predictionrecord` | Season accuracy, including whether stated confidence is calibrated |
+| `/playoffodds` | Simulated playoff odds, expected wins, and mean seed |
+| `/sacko` | Last-place odds — the race for the toilet bowl |
+
+**Predictions are recorded before kickoff and never rewritten.** That's the whole point of the `predictions` table: a prediction only means something if it was locked in beforehand, so it can't be recomputed after the fact. `INSERT OR IGNORE` (not upsert) enforces it — a re-run can't quietly improve the bot's past opinions. Asking for a week with nothing recorded projects it live and says so, and those don't count toward the record.
+
+**Measured accuracy:** backtested on the 2025 regular season the model went **46/78 (59.0%)** with a mean stated confidence of 61.8% — so slightly overconfident, and about 9 points better than a coin flip. On 78 games that's only p≈0.06 one-sided, i.e. one season short of statistically meaningful. Deliberately left untuned rather than fitted to a single season.
+
+**`clinched` and `eliminated` mean mathematically certain**, not "no simulation found it." They're only set when few enough games remain to enumerate every outcome (2ⁿ, n ≤ 14); beyond that the flags stay off and the embed says so, because 10,000 misses is not the same as impossible.
+
+---
+
 ### 📜 League History
 
 All-time records across every season Sleeper has on record, chained through `previous_league_id`. Attribution is by **owner**, not roster: a roster ID is only stable within one season's league, so aggregating by roster would credit the wrong person after a league renewal.
@@ -294,7 +313,7 @@ The rule for this codebase: **persist only what upstream won't give back.**
 | Sleeper (matchups, results, transactions, brackets) | Yes, forever, chained via `previous_league_id` | compute live — don't duplicate it |
 | KeepTradeCut | No API, no history | snapshot daily (`ktc_values`) |
 | Roster composition | Sleeper serves *current* only | snapshot daily (`roster_snapshots`) |
-| Bot-generated (raids, Kohl's ledger, nickname tags, posted recaps) | Nothing else knows it | persist |
+| Bot-generated (raids, Kohl's ledger, nickname tags, posted recaps, predictions) | Nothing else knows it | persist |
 
 Storing derived Sleeper data means keeping a second source of truth in sync for no gain, and it can always be recomputed. Storing KTC values and roster composition is the opposite: miss a day and it's gone permanently.
 
@@ -313,6 +332,7 @@ dynasty_bot/
 │   ├── trade_values.py       # KTC values, team value history, trade grading
 │   ├── analytics.py          # Power rankings, standings, matchups
 │   ├── recaps.py             # Weekly awards, shame wall, luck index
+│   ├── projections.py        # Predictions, playoff odds, sacko watch
 │   ├── history.py            # All-time head-to-head, championship rings
 │   ├── responses.py          # Random responses
 │   ├── scheduler.py          # Reminders
@@ -324,6 +344,7 @@ dynasty_bot/
 │   └── odds.py               # The Odds API
 ├── lib/                      # Shared utilities
 │   ├── results.py            # Weekly results derivation (the shared layer)
+│   ├── projections.py        # Scoring model, win probability, simulation
 │   ├── members.py            # Member registry
 │   ├── roster_history.py     # Daily roster composition snapshots
 │   ├── standings.py          # Standings computation

@@ -73,14 +73,21 @@ a shared **derivation layer**, not a table.
   a league renewal doesn't credit the wrong person
 - **Championship Rings** — `/rings`, read from Sleeper's winners bracket
   rather than guessed from a championship-week matchup id
+- **Projection model** — `lib/projections.py`: per-team scoring
+  distributions shrunk toward the league mean (dynasty value as the week-1
+  prior), pairwise win probability, and a Monte Carlo season simulation.
+  One model behind predictions, playoff odds and sacko watch, so they can't
+  disagree
+- **Weekly Predictions** — `/predictions` and `/predictionrecord`, recorded
+  before kickoff and never rewritten (`INSERT OR IGNORE`, not upsert), graded
+  automatically once a week finishes. Backtested at 46/78 (59.0%) on 2025
+- **Playoff Scenarios** — `/playoffodds`, with clinched/eliminated proved by
+  exhaustive enumeration rather than inferred from simulation
+- **Sacko Watch** — `/sacko`, last-place odds off the same simulation
 
 ---
 
 ## 📊 Advanced Analytics
-
-### Playoff Scenarios
-Auto-calculated clinching/elimination scenarios each week.
-- "Noah needs to win AND have Fuzzy lose to clinch playoffs"
 
 ### "What If" Machine
 `/whatif @player trade` — simulates how your season would've gone with
@@ -88,20 +95,7 @@ different roster decisions.
 
 ---
 
-## 🏆 Awards & Recognition
-
-### Sacko Watch
-Dramatic countdown tracking who's in danger of last place. Straightforward
-on top of the results layer; mostly a question of how mean to be.
-
----
-
 ## 🎰 Fun & Games
-
-### Weekly Predictions
-Bot predicts each matchup winner with confidence %, tracks accuracy over the
-season. **Needs a real table** — the bot's own predictions exist nowhere
-else, so unlike the rest of this section they can't be recomputed.
 
 ### Trade Regret Tracker
 Revisit old trades after N weeks and declare a winner. `/tradegrades`
@@ -196,6 +190,16 @@ Cross-check KTC values. Would also give pick tiers a sanity check.
 - **The bot needs Send Messages on the announcements channel.** The recap
   auto-post got `403 Missing Permissions` on its first run. Recaps fall back
   to `ALERT_CHANNEL_ID`, but the intended target is `#announcements`.
+- **Predictions are only ~59% accurate, on one season of backtest.** Mean
+  stated confidence was 61.8% against 59.0% actual, so the model is mildly
+  overconfident, and 46/78 is p~0.06 one-sided against a coin flip. Left
+  untuned on purpose: fitting the shrinkage constants to 78 games would be
+  overfitting. Revisit once `predictions` has two real seasons in it.
+- **`/playoffodds` reports odds, not scenarios.** It doesn't yet say "Noah
+  needs to win AND have Fuzzy lose" - the enumeration that proves
+  clinched/eliminated could produce those sentences but doesn't.
+- **The simulation ignores the playoff bracket itself.** Odds are for
+  *making* the playoffs, not winning them.
 - **Cadence and quiet hours aren't state-aware.** `RUMORS_PER_WEEK` is one
   constant, so it can't yet be busier in-season or around the trade deadline
   than it is in the dead of the offseason.
@@ -209,10 +213,8 @@ before NFL Week 1 or it sits idle for a year.
 
 | Priority | Feature | Complexity | Deadline |
 |----------|---------|------------|----------|
-| 🔴 High | Weekly Predictions | Medium | Before Week 1 |
-| 🟡 Medium | Playoff Scenarios | Medium | Before playoffs |
-| 🟡 Medium | Sacko Watch | Low (after layer) | Before playoffs |
 | 🟡 Medium | Weekly Newsletter | Medium | Any time |
+| 🟡 Medium | Per-matchup "needs to win" scenarios | Medium | Before playoffs |
 | 🟢 Low | Injury Roasts | Low | Any time |
 | 🟢 Low | Player Birthday Alerts | Low | Any time |
 | 🟢 Low | Trade Regret Tracker | Low (needs history depth) | Blocked ~months |

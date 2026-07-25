@@ -316,6 +316,37 @@ class Database:
             ON ktc_values(player_name, recorded_date)
         """)
 
+        # The bot's own weekly matchup predictions.
+        #
+        # This is stored for the same reason ktc_values is: nothing else
+        # knows it. A prediction is only interesting if it was recorded
+        # *before* the games happened, so it cannot be recomputed after the
+        # fact - re-deriving it later would just be describing the result.
+        # One row per matchup, keyed on the lower roster id first so both
+        # sides can't be inserted as two separate predictions.
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                season INTEGER NOT NULL,
+                week INTEGER NOT NULL,
+                roster_id INTEGER NOT NULL,
+                opponent_roster_id INTEGER NOT NULL,
+                predicted_winner_roster_id INTEGER NOT NULL,
+                confidence REAL NOT NULL,
+                projected_points REAL,
+                opponent_projected_points REAL,
+                actual_winner_roster_id INTEGER,
+                correct INTEGER,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                UNIQUE(season, week, roster_id, opponent_roster_id)
+            )
+        """)
+        await self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_predictions_unresolved
+            ON predictions(season, week, correct)
+        """)
+
         # Posted weekly recaps (awards, shame wall), so a re-run or a
         # restart mid-week doesn't double-post to the channel. Same
         # idempotency shape as reminder_history: the UNIQUE constraint is
