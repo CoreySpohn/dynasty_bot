@@ -44,6 +44,11 @@ EMPTY_STARTER = "0"
 # A margin at or under this counts as a "close" game for luck purposes.
 CLOSE_GAME_MARGIN = 10.0
 
+# Fallbacks matching the league's long-standing setup, for the rare payload
+# that omits them.
+DEFAULT_PLAYOFF_WEEK_START = 15
+DEFAULT_PLAYOFF_TEAMS = 6
+
 
 class SleeperLike(Protocol):
     """The subset of clients.sleeper.SleeperClient this module needs."""
@@ -56,6 +61,34 @@ class SleeperLike(Protocol):
     async def get_winners_bracket(
         self, league_id: str
     ) -> list[dict[str, Any]]: ...
+
+
+def playoff_rounds(playoff_teams: int) -> int:
+    """How many single-elimination rounds it takes to crown a champion.
+
+    Six teams means two byes plus a four-team wildcard round, so three
+    rounds - the same as eight teams would need.
+    """
+    rounds = 1
+    while (1 << rounds) < max(playoff_teams, 2):
+        rounds += 1
+    return rounds
+
+
+def championship_week(league: dict[str, Any]) -> int:
+    """The week the title game is played - the last week that counts.
+
+    League rules score potential points "all the way through the season
+    until the championship weekend", so this is the upper bound for season
+    totals feeding the rookie draft order. Derived from the league's own
+    playoff settings rather than hardcoded, because NFL week 18 is also
+    scored by Sleeper and including it would credit a week played after
+    the league's season ended.
+    """
+    settings = league.get("settings") or {}
+    start = settings.get("playoff_week_start") or DEFAULT_PLAYOFF_WEEK_START
+    teams = settings.get("playoff_teams") or DEFAULT_PLAYOFF_TEAMS
+    return int(start) + playoff_rounds(int(teams)) - 1
 
 
 def calculate_optimal_lineup(

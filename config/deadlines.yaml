@@ -124,7 +124,9 @@ deadlines:
 
 - id: rookie_draft
   name: Rookie Draft
-  description: "🏈 The annual 5-round supplemental draft begins! Each owner has 24 hours per pick."
+  # "Supplemental draft" was a separate, since-voted-out format where
+  # non-rookies on waivers were fair game. This is the rookie draft.
+  description: "🏈 The annual 5-round rookie draft begins! Each owner has 24 hours per pick."
   date: null  # Synced from Sleeper via /sync_sleeper
   recurring: yearly
   reminders:
@@ -202,7 +204,10 @@ deadlines:
 
 - id: trade_deadline
   name: Trade Deadline
-  description: "⏰ No trades allowed from Week 12 until the league is renewed after the Super Bowl!"
+  # Sleeper ties the deadline to the LAST GAME of the configured week, so
+  # trading stays open through all of Week 12 and shuts the moment the final
+  # Week 12 game ends. Hence the anchor is nfl_week_12_end, not week 12's start.
+  description: "⏰ Trades close when the last Week 12 game ends, and stay closed until the league is renewed after the Super Bowl!"
   date: null
   relative_to: nfl_week_12_end
   offset_days: 0

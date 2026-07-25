@@ -24,6 +24,7 @@ from discord.ext import commands
 from clients.sleeper import SleeperClient
 from cogs.analytics import calculate_optimal_lineup
 from config import SLEEPER_LEAGUE_ID
+from lib.results import championship_week
 
 if TYPE_CHECKING:
     from main import DynastyBot
@@ -144,14 +145,16 @@ class DraftCalculator(commands.Cog):
     async def _fetch_team_stats(
         self,
         season: Optional[int] = None,
-        through_week: int = 17,  # Include playoffs
+        through_week: Optional[int] = None,
     ) -> list[TeamStats]:
         """Fetch and calculate all team statistics for the season.
-        
+
         Args:
             season: Season year (defaults to current).
-            through_week: Last week to include (17 for full season + playoffs).
-            
+            through_week: Last week to include. Defaults to the championship
+                week, since league rules count potential points through the
+                championship weekend.
+
         Returns:
             List of TeamStats with all fields populated.
         """
@@ -159,7 +162,9 @@ class DraftCalculator(commands.Cog):
         league = await self.bot.sleeper.get_league(self.league_id)
         if season is None:
             season = int(league.get("season", datetime.now().year))
-        
+        if through_week is None:
+            through_week = championship_week(league)
+
         roster_positions = league.get("roster_positions", [])
         playoff_start = league.get("settings", {}).get("playoff_week_start", 15)
         
@@ -289,27 +294,29 @@ class DraftCalculator(commands.Cog):
         description="Calculate season payouts based on placement and points"
     )
     @app_commands.describe(
-        through_week="Last week to include (default: 17 for full season)"
+        through_week="Last week to include (defaults to the championship week)"
     )
     async def payouts(
         self,
         interaction: discord.Interaction,
-        through_week: int = 17,
+        through_week: Optional[int] = None,
     ) -> None:
         """Display season payouts for all teams."""
         await interaction.response.defer()
-        
+
         try:
-            teams = await self._fetch_team_stats(through_week=through_week)
-            teams = calculate_payouts(teams)
-            
-            # Sort by total payout, then points
-            teams.sort(key=lambda t: (t.total_payout, t.total_points), reverse=True)
-            
             # Get league info for season
             league = await self.bot.sleeper.get_league(self.league_id)
             season = league.get("season", datetime.now().year)
-            
+            if through_week is None:
+                through_week = championship_week(league)
+
+            teams = await self._fetch_team_stats(through_week=through_week)
+            teams = calculate_payouts(teams)
+
+            # Sort by total payout, then points
+            teams.sort(key=lambda t: (t.total_payout, t.total_points), reverse=True)
+
             embed = discord.Embed(
                 title="💰 Season Payouts",
                 description=f"**{season} Season** (through week {through_week})",
@@ -360,26 +367,28 @@ class DraftCalculator(commands.Cog):
         description="Calculate rookie draft order based on payouts and MaxPF"
     )
     @app_commands.describe(
-        through_week="Last week to include (default: 17 for full season)"
+        through_week="Last week to include (defaults to the championship week)"
     )
     async def draft_order(
         self,
         interaction: discord.Interaction,
-        through_week: int = 17,
+        through_week: Optional[int] = None,
     ) -> None:
         """Display the calculated rookie draft order."""
         await interaction.response.defer()
-        
+
         try:
-            teams = await self._fetch_team_stats(through_week=through_week)
-            teams = calculate_payouts(teams)
-            draft_order = calculate_draft_order(teams)
-            
             # Get league info
             league = await self.bot.sleeper.get_league(self.league_id)
             season = league.get("season", datetime.now().year)
             next_season = int(season) + 1
-            
+            if through_week is None:
+                through_week = championship_week(league)
+
+            teams = await self._fetch_team_stats(through_week=through_week)
+            teams = calculate_payouts(teams)
+            draft_order = calculate_draft_order(teams)
+
             embed = discord.Embed(
                 title="🏈 Rookie Draft Order",
                 description=(
@@ -427,25 +436,27 @@ class DraftCalculator(commands.Cog):
         description="Full season report with payouts, MaxPF, and draft order"
     )
     @app_commands.describe(
-        through_week="Last week to include (default: 17 for full season)"
+        through_week="Last week to include (defaults to the championship week)"
     )
     async def season_report(
         self,
         interaction: discord.Interaction,
-        through_week: int = 17,
+        through_week: Optional[int] = None,
     ) -> None:
         """Display a comprehensive season report."""
         await interaction.response.defer()
-        
+
         try:
-            teams = await self._fetch_team_stats(through_week=through_week)
-            teams = calculate_payouts(teams)
-            draft_order = calculate_draft_order(teams)
-            
             # Get league info
             league = await self.bot.sleeper.get_league(self.league_id)
             season = league.get("season", datetime.now().year)
-            
+            if through_week is None:
+                through_week = championship_week(league)
+
+            teams = await self._fetch_team_stats(through_week=through_week)
+            teams = calculate_payouts(teams)
+            draft_order = calculate_draft_order(teams)
+
             embed = discord.Embed(
                 title=f"📊 {season} Season Report",
                 description=f"Complete season summary through week {through_week}",

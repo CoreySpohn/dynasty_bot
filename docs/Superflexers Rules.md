@@ -58,6 +58,8 @@ Every year will have a linear draft for rookies.
 Draft order:  
 The last pick of each round goes to the owner who won the most money, the second to last pick is given to the owner who won the second most money, and so on for the owners that won money. In the case that two owners won the same amount of money, the team with the more potential points (the total number of points you would have scored if you started your highest-scoring lineup each week) will have the later draft pick. The teams that didn’t win money are sorted by potential points, i.e. the remaining team with the fewest potential points has the first pick.
 
+Potential points accumulate across the **whole season, through championship weekend** — the 14-week regular season plus all three playoff weeks (currently weeks 1–17). Every team keeps scoring during the playoff weeks whether they made the playoffs or the consolation bracket, so all 12 teams are measured over the same number of weeks. NFL week 18 is not counted; the league's season is over by then.
+
 The draft is to occur in June or July, all owners will be given 24 hours to consider their options before making or trading a pick. If an owner does not pick within the 24 hours the draft will continue and when the owner realizes they didn’t pick they can contact the commissioner about choosing from the remaining players.
 
 The clock will reset to 12 hours when an owner on the clock trades out of the pick.
@@ -126,7 +128,7 @@ If for some unforeseen reason a player is taken outside of that time period the 
 
 # Trades
 
-Trades are not allowed from week 12 until the league is renewed on Sleeper after the NFL Superbowl.
+The trade deadline is set to week 12 on Sleeper, which ties it to the final game of that week: trading stays open through **all** of the week 12 games and closes as soon as the last one finishes. Trades accepted before that point still process even if they're in a review period. After the deadline nobody can propose or accept a trade until the league is renewed on Sleeper after the NFL Superbowl.
 
 Owners may trade players, draft picks, and FAAB.
 
@@ -210,6 +212,8 @@ I am going to 3d print it, but the filament hasn’t shipped for over a month ca
 There is a consolation bracket with the 6 teams that don’t make the playoffs. 
 
 The winner of it gets the 13th pick of the 5th round in the following rookie draft, it is not allowed to be traded.
+
+Sleeper can't represent this pick — its rookie drafts are exactly 60 picks, 12 per round, so a 13th pick in any round has never existed there. The commissioner awards it **manually after the draft** rather than through Sleeper's draft board.
 
 # Changing League Rules
 

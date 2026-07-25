@@ -17,7 +17,9 @@ from lib.results import (
     build_week_results,
     by_roster,
     by_week,
+    championship_week,
     clear_cache,
+    playoff_rounds,
     get_history_results,
     get_league_chain,
     get_season_results,
@@ -504,3 +506,45 @@ class TestGetChampions:
         sleeper.get_rosters = AsyncMock(return_value=[])
 
         assert await get_champions(sleeper, "L2026") == []
+
+
+class TestChampionshipWeek:
+    """Potential points count through championship weekend, per league rules.
+
+    The number is derived from the league's own playoff settings rather than
+    hardcoded, because Sleeper also scores NFL week 18 - a week played after
+    the league's season has ended.
+    """
+
+    @pytest.mark.parametrize(
+        "teams,expected_rounds",
+        [(2, 1), (4, 2), (6, 3), (8, 3), (12, 4)],
+    )
+    def test_rounds_needed_to_crown_a_champion(self, teams, expected_rounds):
+        assert playoff_rounds(teams) == expected_rounds
+
+    def test_six_teams_from_week_fifteen_ends_week_seventeen(self):
+        """The league's actual setup: 6 playoff teams starting week 15."""
+        league = {"settings": {"playoff_week_start": 15, "playoff_teams": 6}}
+
+        assert championship_week(league) == 17
+
+    def test_excludes_nfl_week_eighteen(self):
+        """Sleeper scores week 18, but the league's season is over by then."""
+        league = {"settings": {"playoff_week_start": 15, "playoff_teams": 6}}
+
+        assert championship_week(league) < 18
+
+    def test_follows_the_league_settings(self):
+        """A shorter bracket or a longer regular season moves the deadline."""
+        four_teams = {"settings": {"playoff_week_start": 15, "playoff_teams": 4}}
+        later_start = {"settings": {"playoff_week_start": 16, "playoff_teams": 6}}
+
+        assert championship_week(four_teams) == 16
+        assert championship_week(later_start) == 18
+
+    def test_falls_back_when_settings_are_missing(self):
+        """An incomplete payload shouldn't silently truncate the season."""
+        assert championship_week({}) == 17
+        assert championship_week({"settings": {}}) == 17
+        assert championship_week({"settings": {"playoff_teams": None}}) == 17
