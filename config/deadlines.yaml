@@ -185,7 +185,12 @@ deadlines:
 
 - id: taxi_decisions
   name: Taxi Squad Decisions
-  description: "🚕 Finalize your taxi squad before NFL Week 1! Sleeper enforces the deadline at start of regular season."
+  # Sleeper does NOT enforce the league's taxi rules - taxi_allow_vets is 1 on
+  # this league, so it will happily accept a free-agent stash that the rules
+  # forbid. Only players drafted in that off-season's rookie draft are legal,
+  # and the commissioner checks by hand (see /taxiaudit, /taxieligible).
+  # Promising enforcement here would invite an illegal move.
+  description: "🚕 Finalize your taxi squad by the day before NFL Week 1! Sleeper won't block an illegal stash - only rookies you drafted this off-season are eligible, and the commissioner checks by hand."
   date: null
   relative_to: nfl_regular_season_start
   offset_days: -1
