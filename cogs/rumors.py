@@ -1076,8 +1076,20 @@ class LeagueRumors(commands.Cog):
         if reporter == "random":
             return self._get_random_reporter()
 
+        # reporter_autocomplete's Choice.value is the bare config name, but
+        # some Discord clients submit the displayed label ("{emoji} {name}")
+        # instead of the value tied to the highlighted suggestion. Strip any
+        # leading emoji/punctuation and compare case-insensitively so those
+        # submissions still resolve instead of silently landing on a random
+        # reporter.
+        reporter_key = re.sub(r"^[^\w]+", "", reporter).strip().casefold()
         reporter_data = next(
-            (r for r in self.config.get("reporters", []) if r.get("name") == reporter),
+            (
+                r
+                for r in self.config.get("reporters", [])
+                if re.sub(r"^[^\w]+", "", r.get("name", "")).strip().casefold()
+                == reporter_key
+            ),
             None,
         )
         if reporter_data:
@@ -1086,6 +1098,11 @@ class LeagueRumors(commands.Cog):
                 reporter_data.get("style", "Be professional."),
                 reporter_data.get("emoji", "📰"),
             )
+        logger.warning(
+            "reporter_autocomplete value %r didn't match any configured "
+            "reporter; falling back to a random reporter",
+            reporter,
+        )
         return self._get_random_reporter()
 
     def _get_reporter_list_text(self) -> str:

@@ -359,6 +359,18 @@ class TestResolveReporter:
         reporter_names = {r["name"] for r in rumors_cog.config.get("reporters", [])}
         assert resolved[0] in reporter_names
 
+    async def test_emoji_prefixed_label_still_resolves(self, rumors_cog):
+        """Some Discord clients submit the autocomplete display label
+        ("{emoji} {name}") instead of the bare Choice.value - this should
+        still resolve to the intended reporter, not fall back to random."""
+        rumors_cog.config = {
+            "reporters": [{"name": "1920s Newsboy", "style": "extra! extra!", "emoji": "🗞️"}]
+        }
+
+        resolved = await rumors_cog._resolve_reporter("🗞 1920s Newsboy")
+
+        assert resolved == ("1920s Newsboy", "extra! extra!", "🗞️")
+
     async def test_custom_without_personality_returns_none(self, rumors_cog):
         resolved = await rumors_cog._resolve_reporter("custom", None)
 
